@@ -37,7 +37,6 @@
 #include "setup.h"
 #include "control.h"
 
-
 #if defined(OS2)
 #define INCL DOSFILEMGR
 #define INCL_DOSERRORS
@@ -91,6 +90,10 @@ public:
 						if(i_drive == DOS_GetDefaultDrive()) 
 							DOS_SetDrive(toupper('Z') - 'A');
 						WriteOut(MSG_Get("PROGRAM_MOUNT_UMOUNT_SUCCESS"),umount[0]);
+							
+						//--Added 2010-01-18 by Alun Bestor: let Boxer know that the drive state has changed
+						boxer_driveDidUnmount(i_drive);
+						//--End of modifications
 						break;
 					case 1:
 						WriteOut(MSG_Get("PROGRAM_MOUNT_UMOUNT_NO_VIRTUAL"));
@@ -226,14 +229,14 @@ public:
 				DosClose(cdrom_fd);
 				if (rc != NO_ERROR && rc != ERROR_NOT_READY) {
 #if C_HAVE_PHYSFS
-					// Make it a physfs then...
-					is_physfs = true;
-					temp_line.insert(0, 1, ':');
+				// Make it a physfs then...
+				is_physfs = true;
+				temp_line.insert(0, 1, ':');
 #else
-					WriteOut(MSG_Get("PROGRAM_MOUNT_ERROR_2"),temp_line.c_str());
-					return;
+				WriteOut(MSG_Get("PROGRAM_MOUNT_ERROR_2"),temp_line.c_str());
+				return;
 #endif
-				}
+			}
 #else
 #if C_HAVE_PHYSFS
 				// Make it a physfs then...
@@ -311,7 +314,12 @@ public:
 				    (temp_line == "c:/") || (temp_line == "C:/")    )	
 					WriteOut(MSG_Get("PROGRAM_MOUNT_WARNING_WIN"));
 #else
-				if(temp_line == "/") WriteOut(MSG_Get("PROGRAM_MOUNT_WARNING_OTHER"));
+				//--Modified 2009-02-20 by Alun Bestor: we now prohibit this altogether and produce our own contextual warning.
+				//if(temp_line == "/") WriteOut(MSG_Get("PROGRAM_MOUNT_WARNING_OTHER"));
+				
+				if(!boxer_shouldMountPath(temp_line.c_str())) return;
+				
+				//--End of modifications
 #endif
 				if (is_physfs) {
 #if C_HAVE_PHYSFS
@@ -320,7 +328,7 @@ public:
 					LOG_MSG("ERROR:This build does not support physfs");
 #endif
 				} else {
-					newdrive = new localDrive(temp_line.c_str(),sizes[0],bit8size,sizes[2],sizes[3],mediaid);
+					newdrive=new localDrive(temp_line.c_str(),sizes[0],bit8size,sizes[2],sizes[3],mediaid);
 				}
 			}
 		} else {
@@ -338,17 +346,22 @@ public:
 		mem_writeb(Real2Phys(dos.tables.mediaid)+(drive-'A')*2,newdrive->GetMediaByte());
 		WriteOut(MSG_Get("PROGRAM_MOUNT_STATUS_2"),drive,newdrive->GetInfo());
 		/* check if volume label is given and don't allow it to updated in the future */
-		if (cmd->FindString("-label",label,true)) newdrive->dirCache.SetLabel(label.c_str(),iscdrom,false);
+		if (cmd->FindString("-label",label,true)) newdrive->SetLabel(label.c_str(),iscdrom,false);
 		/* For hard drives set the label to DRIVELETTER_Drive.
 		 * For floppy drives set the label to DRIVELETTER_Floppy.
 		 * This way every drive except cdroms should get a label.*/
 		else if(type == "dir") { 
 			label = drive; label += "_DRIVE";
-			newdrive->dirCache.SetLabel(label.c_str(),iscdrom,false);
+			newdrive->SetLabel(label.c_str(),iscdrom,true);
 		} else if(type == "floppy") {
 			label = drive; label += "_FLOPPY";
-			newdrive->dirCache.SetLabel(label.c_str(),iscdrom,true);
+			newdrive->SetLabel(label.c_str(),iscdrom,true);
 		}
+		
+		//--Added 2010-01-18 by Alun Bestor: let Boxer know that the drive state has changed
+		boxer_driveDidMount(drive-'A');
+		//--End of modifications
+		
 		return;
 showusage:
 #if defined (WIN32) || defined(OS2)
@@ -1025,6 +1038,11 @@ public:
 						if (i_drive == DOS_GetDefaultDrive()) 
 							DOS_SetDrive(toupper('Z') - 'A');
 						WriteOut(MSG_Get("PROGRAM_MOUNT_UMOUNT_SUCCESS"),umount[0]);
+						
+						//--Added 2010-01-18 by Alun Bestor: let Boxer know that the drive state has changed
+						boxer_driveDidUnmount(i_drive);
+						//--End of modifications
+							
 						break;
 					case 1:
 						WriteOut(MSG_Get("PROGRAM_MOUNT_UMOUNT_NO_VIRTUAL"));
@@ -1289,6 +1307,10 @@ public:
 			WriteOut(MSG_Get("PROGRAM_IMGMOUNT_MOUNT_NUMBER"),drive-'0',temp_line.c_str());
 		}
 
+		//--Added 2010-01-18 by Alun Bestor: let Boxer know that the drive state has changed
+		boxer_driveDidMount(drive-'A');
+		//--End of modifications
+		
 		// check if volume label is given. becareful for cdrom
 		//if (cmd->FindString("-label",label,true)) newdrive->dirCache.SetLabel(label.c_str());
 		return;
@@ -1574,7 +1596,9 @@ void DOS_SetupPrograms(void) {
 	PROGRAMS_MakeFile("MEM.COM",MEM_ProgramStart);
 	PROGRAMS_MakeFile("LOADFIX.COM",LOADFIX_ProgramStart);
 	PROGRAMS_MakeFile("RESCAN.COM",RESCAN_ProgramStart);
-	PROGRAMS_MakeFile("INTRO.COM",INTRO_ProgramStart);
+    //--Disabled 2012-01-06 by Alun Bestor: Boxer no longer uses the INTRO command.
+	//PROGRAMS_MakeFile("INTRO.COM",INTRO_ProgramStart);
+    //--End of modifications
 	PROGRAMS_MakeFile("BOOT.COM",BOOT_ProgramStart);
 #if C_DEBUG
 	PROGRAMS_MakeFile("LDGFXROM.COM", LDGFXROM_ProgramStart);

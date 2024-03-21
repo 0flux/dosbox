@@ -79,6 +79,10 @@ public:
 	virtual void	AddRef()					{ refCtr++; };
 	virtual Bits	RemoveRef()					{ return --refCtr; };
 	virtual bool	UpdateDateTimeFromHost()	{ return true; }
+    //--Added 2011-11-03 by Alun Bestor to let Boxer inform open file handles
+    //that their physical backing media will be removed.
+    virtual void    willBecomeUnavailable()     { }
+    //--End of modifications
 	void SetDrive(Bit8u drv) { hdrive=drv;}
 	Bit8u GetDrive(void) { return hdrive;}
 	Bit32u flags;
@@ -128,7 +132,7 @@ class DOS_Drive;
 class DOS_Drive_Cache {
 public:
 	DOS_Drive_Cache					(void);
-	DOS_Drive_Cache					(const char* path, DOS_Drive *drive);
+	DOS_Drive_Cache					(const char* path, DOS_Drive *drive); 
 	~DOS_Drive_Cache				(void);
 
 	enum TDirSort { NOSORT, ALPHABETICAL, DIRALPHABETICAL, ALPHABETICALREV, DIRALPHABETICALREV };
@@ -140,7 +144,11 @@ public:
 
 	void		ExpandName			(char* path);
 	char*		GetExpandName		(const char* path);
-	bool		GetShortName		(const char* fullname, char* shortname);
+
+	//--Modified 2009-10-06 by Alun Bestor: changed function signature to correspond to new implementation in drive_cache.cpp.
+	bool		GetShortName		(const char* dirpath, const char* filename, char* shortname);
+	//bool		GetShortName		(const char* fullname, char* shortname);
+	//--End of modifications
 
 	bool		FindFirst			(char* path, Bit16u& id);
 	bool		FindNext			(Bit16u id, char* &result);
@@ -232,6 +240,7 @@ public:
 	virtual bool FileStat(const char* name, FileStat_Block * const stat_block)=0;
 	virtual Bit8u GetMediaByte(void)=0;
 	virtual void SetDir(const char* path) { strcpy(curdir,path); };
+//	virtual void EmptyCache(void) { dirCache.EmptyCache(); };
 	virtual bool isRemote(void)=0;
 	virtual bool isRemovable(void)=0;
 	virtual Bits UnMount(void)=0;
@@ -245,10 +254,21 @@ public:
 	virtual const char * GetInfo(void);
 	char curdir[DOS_PATHLENGTH];
 	char info[256];
+	
 	/* Can be overridden for example in iso images */
-	virtual char const * GetLabel() {return "NOLABEL";};
-	virtual void SetLabel(const char *label, bool iscdrom, bool updatable) {};
+	virtual char const * GetLabel() {return "NOLABEL";}; 
+	virtual void SetLabel(const char *label, bool iscdrom, bool updatable) {}; 
 	virtual void EmptyCache() {};
+
+	//--Added 2009-10-25 by Alun Bestor to access the base system path for a drive
+	char systempath[CROSS_LEN];
+	char * getSystemPath(void);
+	
+	//Added 2010-12-11 by Alun Bestor to give Boxer the ability to do directory cache lookups
+	virtual bool getShortName(const char* dirpath, const char*filename, char* shortname) { return false; };
+	//--End of modifications
+	
+	DOS_Drive_Cache dirCache;
 
 	// disk cycling functionality (request resources)
 	virtual void Activate(void) {};

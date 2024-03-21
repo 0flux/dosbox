@@ -60,7 +60,9 @@ public:
 
 class device_PRN : public DOS_Device {
 public:
-   	device_PRN() { SetName("PRN");}
+	device_PRN() {
+		SetName("PRN");
+	}
 	bool Read(Bit8u * data,Bit16u * size) {
 		*size=0;
 		LOG(LOG_DOSMISC,LOG_NORMAL)("PRNDEVICE:Read called");
@@ -83,8 +85,12 @@ public:
 		*pos = 0;
 		return true;
 	}
-	Bit16u GetInformation(void) { return 0x80A0; }
-	bool Close() { return false; }
+	Bit16u GetInformation(void) {
+		return 0x80A0;
+	}
+	bool Close() {
+		return false;
+	}
 };
 
 bool DOS_Device::Read(Bit8u * data,Bit16u * size) {

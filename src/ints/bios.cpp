@@ -427,35 +427,29 @@ static Bitu INT17_Handler(void) {
 	}
     
 	switch(reg_ah) {
-	case 0x00:		/* PRINTER: Write Character */
-		if(parallelPortObjects[reg_dx]!=0) {
-			if(parallelPortObjects[reg_dx]->Putchar(reg_al)) {
-				reg_ah=parallelPortObjects[reg_dx]->getPrinterStatus();
-			} else {
-				reg_ah=1;	/* Report a timeout */
-			}
-		}
-		break;
-	case 0x01:		/* PRINTER: Initialize port */
-		if(parallelPortObjects[reg_dx]!= 0) {
-			parallelPortObjects[reg_dx]->initialize();
-			reg_ah=parallelPortObjects[reg_dx]->getPrinterStatus();
-		}
-		break;
-	case 0x02:		/* PRINTER: Get Status */
-		if(parallelPortObjects[reg_dx] != 0) {
-			reg_ah=parallelPortObjects[reg_dx]->getPrinterStatus();
-			//LOG_MSG("printer status: %x",reg_ah);
-		}
-		break;
-	case 0x20:		/* Some sort of printerdriver install check*/
-		break;
-	default:
-		E_Exit("Unhandled INT 17 call %2X",reg_ah);
+        case 0x00:		// PRINTER: Write Character
+            if(parallelPortObjects[reg_dx]!=0) {
+                if(parallelPortObjects[reg_dx]->Putchar(reg_al))
+                    reg_ah=parallelPortObjects[reg_dx]->getPrinterStatus();
+                else reg_ah=1;
+            }
+            break;
+        case 0x01:		// PRINTER: Initialize port
+            if(parallelPortObjects[reg_dx]!= 0) {
+                parallelPortObjects[reg_dx]->initialize();
+                reg_ah=parallelPortObjects[reg_dx]->getPrinterStatus();
+            }
+            break;
+        case 0x02:		// PRINTER: Get Status
+            if(parallelPortObjects[reg_dx] != 0)
+                reg_ah=parallelPortObjects[reg_dx]->getPrinterStatus();
+            //LOG_MSG("printer status: %x",reg_ah);
+            break;
 	};
 	return CBRET_NONE;
 }
 //--End of modifications
+
 
 static Bit8u INT14_Wait(Bit16u port, Bit8u mask, Bit8u timeout) {
 	double starttime = PIC_FullIndex();
@@ -1157,7 +1151,8 @@ void BIOS_SetComPorts(Bit16u baseaddr[]) {
 	equipmentword = mem_readw(BIOS_CONFIGURATION);
 	equipmentword &= (~0x0E00);
 	equipmentword |= (portcount << 9);
-	BIOS_SetEquipment(equipmentword);
+	mem_writew(BIOS_CONFIGURATION,equipmentword);
+	CMOS_SetRegister(0x14,(Bit8u)(equipmentword&0xff)); //Should be updated on changes
 }
 
 //--Added 2012-10-19 by Alun Bestor as part of parallel port emulation
@@ -1186,7 +1181,7 @@ void BIOS_SetLPTPort(Bitu port, Bit16u baseaddr) {
 	Bit16u equipmentword = mem_readw(BIOS_CONFIGURATION);
 	equipmentword &= (~0xC000);
 	equipmentword |= (portcount << 14);
-	BIOS_SetEquipment(equipmentword);
+	mem_writew(BIOS_CONFIGURATION,equipmentword);
 }
 //--End of modifications
 

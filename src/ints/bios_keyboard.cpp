@@ -31,9 +31,11 @@
 /* SDL by default treats numlock and scrolllock different from all other keys.
  * In recent versions this can disabled by a environment variable which we set in sdlmain.cpp
  * Define the following if this is the case */
-#if SDL_VERSION_ATLEAST(1, 2, 14)
+//--Modified 2011-03-30 by Alun Bestor to reflect that this is now fixed within Boxer
+//#if SDL_VERSION_ATLEAST(1, 2, 14)
 #define CAN_USE_LOCK 1
-#endif
+//#endif
+//--End of modifications
 
 static Bitu call_int16,call_irq1,irq1_ret_ctrlbreak_callback,call_irq6;
 
@@ -166,6 +168,11 @@ static void add_key(Bit16u code) {
 }
 
 static bool get_key(Bit16u &code) {
+    //--Added 2012-04-15 to let Boxer insert its own keys
+    if (boxer_getNextKeyCodeInPasteBuffer(&code, true))
+        return true;
+    //--End of modifications
+    
 	Bit16u start,end,head,tail,thead;
 	if (machine==MCH_PCJR) {
 		/* should be done for cga and others as well, to be tested */
@@ -183,10 +190,16 @@ static bool get_key(Bit16u &code) {
 	if (thead>=end) thead=start;
 	mem_writew(BIOS_KEYBOARD_BUFFER_HEAD,thead);
 	code = real_readw(0x40,head);
+    
 	return true;
 }
 
 static bool check_key(Bit16u &code) {
+    //--Added 2012-04-15 to let Boxer insert its own keys
+    if (boxer_getNextKeyCodeInPasteBuffer(&code, false))
+        return true;
+    //--End of modifications
+    
 	Bit16u head,tail;
 	head =mem_readw(BIOS_KEYBOARD_BUFFER_HEAD);
 	tail =mem_readw(BIOS_KEYBOARD_BUFFER_TAIL);
@@ -306,8 +319,10 @@ static Bitu IRQ1_Handler(void) {
 		break;
 
 #ifdef CAN_USE_LOCK
-	case 0x3a:flags2 |=0x40;break;//CAPSLOCK
-	case 0xba:flags1 ^=0x40;flags2 &=~0x40;leds ^=0x04;break;
+    case 0x3a:flags2 |=0x40;break;//CAPSLOCK
+//--Modified 2011-03-13 by Alun Bestor to let Boxer sniff the state of lock keys.
+    case 0xba:flags1 ^=0x40;flags2 &=~0x40;leds ^=0x04;boxer_setCapsLockActive(flags1 & 0x40);break;
+//--End of modifications
 #else
 	case 0x3a:flags2 |=0x40;flags1 |=0x40;leds |=0x04;break; //SDL gives only the state instead of the toggle					/* Caps Lock */
 	case 0xba:flags1 &=~0x40;leds &=~0x04;break;
@@ -351,30 +366,34 @@ static Bitu IRQ1_Handler(void) {
 			flags1 &=~0x20;
 			leds &=~0x02;
 #endif
+            //--Added 2011-03-13 by Alun Bestor to let Boxer sniff the state of lock keys.
+            boxer_setNumLockActive(flags1 & 0x20);
+            //--End of modifications
 		}
-		break;
-	case 0x46:						/* Scroll Lock or Ctrl-Break */
-		/* if it has E0 prefix, or is Ctrl-NumLock on non-enhanced keyboard => Break */
-		if((flags3&0x02) || (!(flags3&0x10) && (flags1&0x04))) {	/* Ctrl-Break? */
-			/* remove 0xe0-prefix */
-			flags3 &=~0x02;
-			printf("Triggering honest-to-god Ctrl+Break.\n");
-			mem_writeb(BIOS_KEYBOARD_FLAGS3,flags3);
-			mem_writeb(BIOS_CTRL_BREAK_FLAG,0x80);
-			empty_keyboard_buffer();
-			SegSet16(cs, RealSeg(CALLBACK_RealPointer(irq1_ret_ctrlbreak_callback)));
-			reg_ip = RealOff(CALLBACK_RealPointer(irq1_ret_ctrlbreak_callback));
-			return CBRET_NONE;
-		} else {													/* Scroll Lock. */
-			flags2 |=0x10;
-		}
-		break;
-	case 0xc6:
-		if((flags3&0x02) || (!(flags3&0x10) && (flags1&0x04))) {	/* Ctrl-Break released? */
-			/* nothing to do */
-		} else {
-			flags1 ^=0x10;flags2 &=~0x10;leds ^=0x01;break;			/* Scroll Lock released */
-		}
+        break;
+        case 0x46:						/* Scroll Lock or Ctrl-Break */
+            /* if it has E0 prefix, or is Ctrl-NumLock on non-enhanced keyboard => Break */
+            if((flags3&0x02) || (!(flags3&0x10) && (flags1&0x04))) {				/* Ctrl-Break? */
+                /* remove 0xe0-prefix */
+                flags3 &=~0x02;
+                mem_writeb(BIOS_KEYBOARD_FLAGS3,flags3);
+                mem_writeb(BIOS_CTRL_BREAK_FLAG,0x80);
+                empty_keyboard_buffer();
+                SegSet16(cs, RealSeg(CALLBACK_RealPointer(irq1_ret_ctrlbreak_callback)));
+                reg_ip = RealOff(CALLBACK_RealPointer(irq1_ret_ctrlbreak_callback));
+                return CBRET_NONE;
+            } else {                                        /* Scroll Lock. */
+                flags2 |=0x10;				/* Scroll Lock SDL Seems to do this one fine (so break and make codes) */
+            }
+            break;
+        case 0xc6:
+            if((flags3&0x02) || (!(flags3&0x10) && (flags1&0x04))) {				/* Ctrl-Break released? */
+                /* nothing to do */
+            } else {
+                //--Modified 2011-03-13 by Alun Bestor to let Boxer sniff the state of lock keys.
+                flags1 ^=0x10;flags2 &=~0x10;leds ^=0x01;boxer_setScrollLockActive(flags1 & 0x10);break;		/* Scroll Lock released */
+                //--End of modifications
+            }
 //	case 0x52:flags2|=128;break;//See numpad					/* Insert */
 	case 0xd2:	
 		if(flags3&0x02) { /* Maybe honour the insert on keypad as well */
@@ -480,10 +499,12 @@ irq1_end:
 	return CBRET_NONE;
 }
 
+
 static Bitu IRQ1_CtrlBreakAfterInt1B(void) {
 	BIOS_AddKeyToBuffer(0x0000);
 	return CBRET_NONE;
 }
+
 
 /* check whether key combination is enhanced or not,
    translate key if necessary */
@@ -513,6 +534,14 @@ static bool IsEnhancedKey(Bit16u &key) {
 
 static Bitu INT16_Handler(void) {
 	Bit16u temp=0;
+    
+    //--Added 2012-08-19 by Alun Bestor to let Boxer interrupt keyboard listening loops
+    if (!boxer_continueListeningForKeyEvents())
+    {
+        return CBRET_STOP;
+    }
+    //--End of modifications
+    
 	switch (reg_ah) {
 	case 0x00: /* GET KEYSTROKE */
 		if ((get_key(temp)) && (!IsEnhancedKey(temp))) {

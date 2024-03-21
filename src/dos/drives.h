@@ -53,8 +53,8 @@ class localDrive : public DOS_Drive {
 public:
 	localDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid);
 	virtual bool FileOpen(DOS_File * * file,const char * name,Bit32u flags);
-	virtual FILE *GetSystemFilePtr(char const * const name, char const * const type);
-	virtual bool GetSystemFilename(char* sysName, char const * const dosName);
+	virtual FILE *GetSystemFilePtr(char const * const name, char const * const type); 
+	virtual bool GetSystemFilename(char* sysName, char const * const dosName); 
 	virtual bool FileCreate(DOS_File * * file,const char * name,Bit16u attributes);
 	virtual bool FileUnlink(const char * name);
 	virtual bool RemoveDir(const char * dir);
@@ -71,15 +71,20 @@ public:
 	virtual bool isRemote(void);
 	virtual bool isRemovable(void);
 	virtual Bits UnMount(void);
-	// const char* getBasedir() {return basedir;};
 	virtual char const * GetLabel(){return dirCache.GetLabel();};
 	virtual void SetLabel(const char *label, bool iscdrom, bool updatable) { dirCache.SetLabel(label,iscdrom,updatable); };
 	virtual void *opendir(const char *dir);
 	virtual void closedir(void *handle);
 	virtual bool read_directory_first(void *handle, char* entry_name, bool& is_directory);
 	virtual bool read_directory_next(void *handle, char* entry_name, bool& is_directory);
+
 	virtual void EmptyCache(void) { dirCache.EmptyCache(); };
-private:
+
+	//Added 2010-12-11 by Alun Bestor to give Boxer the ability to do directory cache lookups
+	virtual bool getShortName(const char* dirpath, const char*filename, char* shortname) { return dirCache.GetShortName(dirpath, filename, shortname); };
+	//End of modifications
+	
+protected:
 	DOS_Drive_Cache dirCache;
 	char basedir[CROSS_LEN];
 	friend void DOS_Shell::CMD_SUBST(char* args); 	
@@ -216,8 +221,6 @@ public:
 	imageDisk *loadedDisk;
 	bool created_successfully;
 private:
-	Bit32u partSectOff;
-	DOS_Drive_Cache dirCache;
 	Bit32u getClusterValue(Bit32u clustNum);
 	void setClusterValue(Bit32u clustNum, Bit32u clustValue);
 	Bit32u getClustFirstSect(Bit32u clustNum);

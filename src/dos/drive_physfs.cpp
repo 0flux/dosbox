@@ -25,7 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <physfs.h>
+#include <PhysFS/physfs.h>
 #include "dos_inc.h"
 #include "drives.h"
 #include "support.h"
@@ -57,7 +57,7 @@ public:
 	bool prepareWrite();
 	bool Close();
 	Bit16u GetInformation(void);
-	bool UpdateDateTimeFromHost(void);
+	bool UpdateDateTimeFromHost(void);   
 private:
 	PHYSFS_file * fhandle;
 	enum { READ,WRITE } last_action;
@@ -94,10 +94,9 @@ bool physfsDrive::FileCreate(DOS_File * * file,const char * name,Bit16u attribut
 
 	/* Test if file exists, don't add to dirCache then */
 	bool existing_file=PHYSFS_exists(newname);
-
+	
 	char *slash = strrchr(newname,'/');
 	if (slash && slash != newname) {
-		char file[CROSS_LEN];
 		*slash = 0;
 		if (!PHYSFS_isDirectory(newname)) return false;
 		PHYSFS_mkdir(newname);
@@ -131,7 +130,7 @@ bool physfsDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
 	normalize(newname,basedir);
 
 	PHYSFS_file * hand;
-
+	
 	if (!PHYSFS_exists(newname)) return false;
 	if ((flags&0xf) == OPEN_READ) {
 		hand = PHYSFS_openRead(newname);
@@ -141,7 +140,7 @@ bool physfsDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
 		hand = PHYSFS_openRead(newname);
 	}
 
-	if (!hand) {
+	if (!hand) { 
 		if((flags&0xf) != OPEN_READ) {
 			PHYSFS_file *hmm = PHYSFS_openRead(newname);
 			if (hmm) {
@@ -151,7 +150,7 @@ bool physfsDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
 		}
 		return false;
 	}
-
+   
 	*file=new physfsFile(name,hand,0x202,newname,false);
 	(*file)->flags=flags;  //for the inheritance flag and maybe check for others.
 	return true;
@@ -182,7 +181,7 @@ bool physfsDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) 
 
 	char end[2]={CROSS_FILESPLIT,0};
 	if (tempDir[strlen(tempDir)-1]!=CROSS_FILESPLIT) strcat(tempDir,end);
-
+	
 	Bit16u id;
 	if (!dirCache.FindFirst(tempDir,id))
 	{
@@ -191,7 +190,7 @@ bool physfsDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) 
 	}
 	strcpy(srchInfo[id].srch_dir,tempDir);
 	dta.SetDirID(id);
-
+	
 	Bit8u sAttr;
 	dta.GetSearchParams(sAttr,tempDir);
 
@@ -203,7 +202,7 @@ bool physfsDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) 
 		}
 		dta.SetResult(dirCache.GetLabel(),0,0,0,DOS_ATTR_VOLUME);
 		return true;
-	} else if ((sAttr & DOS_ATTR_VOLUME)  && (*_dir == 0) && !fcb_findfirst) {
+	} else if ((sAttr & DOS_ATTR_VOLUME)  && (*_dir == 0) && !fcb_findfirst) { 
 	//should check for a valid leading directory instead of 0
 	//exists==true if the volume label matches the searchmask and the path is valid
 		if ( strcmp(dirCache.GetLabel(), "") == 0 ) {
@@ -228,7 +227,7 @@ bool physfsDrive::FindNext(DOS_DTA & dta) {
 	Bit8u find_attr;
 
 	dta.GetSearchParams(srch_attr,srch_pattern);
-
+	
 	Bitu id = dta.GetDirID();
 
 again:
@@ -242,26 +241,26 @@ again:
 	if(strlen(dir_ent)<DOS_NAMELENGTH_ASCII){
 		strcpy(find_name,dir_ent);
 		upcase(find_name);
-	}
+	} 
 
 	strcpy(full_name,srchInfo[id].srch_dir);
 	strcat(full_name,dir_ent);
 	dirCache.ExpandName(full_name);
 	normalize(full_name,basedir);
-
+	
 	if (PHYSFS_isDirectory(full_name)) find_attr=DOS_ATTR_DIRECTORY|DOS_ATTR_ARCHIVE;
 	else find_attr=DOS_ATTR_ARCHIVE;
-	if (~srch_attr & find_attr & (DOS_ATTR_DIRECTORY | DOS_ATTR_HIDDEN | DOS_ATTR_SYSTEM)) goto again;
-
+ 	if (~srch_attr & find_attr & (DOS_ATTR_DIRECTORY | DOS_ATTR_HIDDEN | DOS_ATTR_SYSTEM)) goto again;
+	
 	/*file is okay, setup everything to be copied in DTA Block */
 	find_size=(Bit32u)PHYSFS_fileLength(full_name);
-	time_t mytime = PHYSFS_getLastModTime(full_name);
+	time_t mytime = (time_t)PHYSFS_getLastModTime(full_name);
 	struct tm *time;
 	if((time=localtime(&mytime))!=0){
 		find_date=DOS_PackDate((Bit16u)(time->tm_year+1900),(Bit16u)(time->tm_mon+1),(Bit16u)time->tm_mday);
 		find_time=DOS_PackTime((Bit16u)time->tm_hour,(Bit16u)time->tm_min,(Bit16u)time->tm_sec);
 	} else {
-		find_time=6;
+		find_time=6; 
 		find_date=4;
 	}
 	dta.SetResult(find_name,find_size,find_date,find_time,find_attr);
@@ -332,7 +331,7 @@ bool physfsDrive::Rename(const char * oldname,const char * newname) {
 	CROSS_FILENAME(newold);
 	dirCache.ExpandName(newold);
 	normalize(newold,basedir);
-
+	
 	char newnew[CROSS_LEN];
 	strcpy(newnew,basedir);
 	strcat(newnew,newname);
@@ -372,7 +371,7 @@ bool physfsDrive::FileStat(const char* name, FileStat_Block * const stat_block) 
 	CROSS_FILENAME(newname);
 	dirCache.ExpandName(newname);
 	normalize(newname,basedir);
-	time_t mytime = PHYSFS_getLastModTime(newname);
+	time_t mytime = (time_t)PHYSFS_getLastModTime(newname);
 	/* Convert the stat to a FileStat */
 	struct tm *time;
 	if((time=localtime(&mytime))!=0) {
@@ -415,7 +414,7 @@ void *physfsDrive::opendir(const char *name) {
 	char myname[CROSS_LEN];
 	strcpy(myname,name);
 	normalize(myname,basedir);
-	if (!PHYSFS_isDirectory(myname)) return false;
+	if (!PHYSFS_isDirectory(myname)) return NULL;
 
 	struct opendirinfo *oinfo = (struct opendirinfo *)malloc(sizeof(struct opendirinfo));
 	oinfo->files = PHYSFS_enumerateFiles(myname);
@@ -476,7 +475,7 @@ physfsDrive::physfsDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _secto
 		strcpy(newname,startdir);
 	}
 
-	CROSS_FILENAME(newname);
+	CROSS_FILENAME(newname);	
 	if (!physfs_used) {
 		PHYSFS_init("");
 		PHYSFS_permitSymbolicLinks(1);
@@ -510,7 +509,7 @@ physfsDrive::physfsDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _secto
 			PHYSFS_setWriteDir(oldwrite);
 	}
 	if (oldwrite) free((char *)oldwrite);
-
+	
 	strcpy(basedir,lastdir);
 
 	allocation.bytes_sector=_bytes_sector;
@@ -559,7 +558,7 @@ bool physfsFile::Read(Bit8u * data,Bit16u * size) {
 	}
 	if (last_action==WRITE) prepareRead();
 	last_action=READ;
-	PHYSFS_sint64 mysize = PHYSFS_read(fhandle,data,1,(PHYSFS_uint64)*size);
+	PHYSFS_sint64 mysize = PHYSFS_read(fhandle,data,1,(PHYSFS_uint32)*size);
 	//LOG_MSG("Read %i bytes (wanted %i) at %i of %s (%s)",(int)mysize,(int)*size,(int)PHYSFS_tell(fhandle),name,PHYSFS_getLastError());
 	*size = (Bit16u)mysize;
 	return true;
@@ -575,13 +574,14 @@ bool physfsFile::Write(Bit8u * data,Bit16u * size) {
 	if (*size==0) {
 		if (PHYSFS_tell(fhandle) == 0) {
 			PHYSFS_close(PHYSFS_openWrite(pname));
+            return false;
 			//LOG_MSG("Truncate %s (%s)",name,PHYSFS_getLastError());
 		} else {
-			LOG_MSG("PHYSFS TODO: truncate not yet implemented (%s at %i)",pname,PHYSFS_tell(fhandle));
+			LOG_MSG("PHYSFS TODO: truncate not yet implemented (%s at %lld)",pname,PHYSFS_tell(fhandle));
 			return false;
 		}
 	} else {
-		PHYSFS_sint64 mysize = PHYSFS_write(fhandle,data,1,(PHYSFS_uint64)*size);
+		PHYSFS_sint64 mysize = PHYSFS_write(fhandle,data,1,(PHYSFS_uint32)*size);
 		//LOG_MSG("Wrote %i bytes (wanted %i) at %i of %s (%s)",(int)mysize,(int)*size,(int)PHYSFS_tell(fhandle),name,PHYSFS_getLastError());
 		*size = (Bit16u)mysize;
 		return true;
@@ -592,14 +592,14 @@ bool physfsFile::Seek(Bit32u * pos,Bit32u type) {
 	switch (type) {
 	case DOS_SEEK_SET:break;
 	case DOS_SEEK_CUR:mypos += PHYSFS_tell(fhandle); break;
-	case DOS_SEEK_END:mypos += PHYSFS_fileLength(fhandle);-mypos; break;
+	case DOS_SEEK_END:mypos += PHYSFS_fileLength(fhandle); break;
 	default:
 	//TODO Give some doserrorcode;
 		return false;//ERROR
 	}
 
 	if (!PHYSFS_seek(fhandle,mypos)) {
-		// Out of file range, pretend everythings ok
+		// Out of file range, pretend everythings ok 
 		// and move file pointer top end of file... ?! (Black Thorne)
 		PHYSFS_seek(fhandle,PHYSFS_fileLength(fhandle));
 	};
@@ -615,6 +615,7 @@ bool physfsFile::prepareRead() {
 	fhandle = PHYSFS_openRead(pname);
 	PHYSFS_seek(fhandle, pos);
 	//LOG_MSG("Goto read (%s at %i)",pname,PHYSFS_tell(fhandle));
+    return true;
 }
 
 #ifndef WIN32
@@ -648,7 +649,7 @@ bool physfsFile::prepareWrite() {
 		PHYSFS_sint64 size;
 		PHYSFS_seek(fhandle, 0);
 		while ((size = PHYSFS_read(fhandle,buffer,1,65536)) > 0) {
-			if (PHYSFS_write(whandle,buffer,1,size) != size) {
+			if (PHYSFS_write(whandle,buffer,1,(PHYSFS_uint32)size) != size) {
 				LOG_MSG("PHYSFS copy-on-write failed: %s.",PHYSFS_getLastError());
 				PHYSFS_close(whandle);
 				return false;
@@ -662,7 +663,7 @@ bool physfsFile::prepareWrite() {
 		PHYSFS_close(fhandle);
 		fhandle = PHYSFS_openAppend(pname);
 #ifndef WIN32
-		int rc = fcntl(**(int**)fhandle->opaque,F_SETFL,0);
+		fcntl(**(int**)fhandle->opaque,F_SETFL,0);
 #endif
 		PHYSFS_seek(fhandle, pos);
 	}
@@ -682,18 +683,18 @@ bool physfsFile::Close() {
 Bit16u physfsFile::GetInformation(void) {
 	return info;
 }
-
+	
 
 physfsFile::physfsFile(const char* _name, PHYSFS_file * handle,Bit16u devinfo, const char* physname, bool write) {
 	fhandle=handle;
 	info=devinfo;
 	strcpy(pname,physname);
-	time_t mytime = PHYSFS_getLastModTime(pname);
+	time_t mytime = (time_t)PHYSFS_getLastModTime(pname);
 	/* Convert the stat to a FileStat */
-	struct tm *time;
-	if((time=localtime(&mytime))!=0) {
-		this->time=DOS_PackTime((Bit16u)time->tm_hour,(Bit16u)time->tm_min,(Bit16u)time->tm_sec);
-		this->date=DOS_PackDate((Bit16u)(time->tm_year+1900),(Bit16u)(time->tm_mon+1),(Bit16u)time->tm_mday);
+	struct tm *lctime;
+	if((lctime=localtime(&mytime))!=0) {
+		this->time=DOS_PackTime((Bit16u)lctime->tm_hour,(Bit16u)lctime->tm_min,(Bit16u)lctime->tm_sec);
+		this->date=DOS_PackDate((Bit16u)(lctime->tm_year+1900),(Bit16u)(lctime->tm_mon+1),(Bit16u)lctime->tm_mday);
 	} else {
 		this->time=DOS_PackTime(0,0,0);
 		this->date=DOS_PackDate(1980,1,1);
@@ -709,12 +710,12 @@ physfsFile::physfsFile(const char* _name, PHYSFS_file * handle,Bit16u devinfo, c
 
 bool physfsFile::UpdateDateTimeFromHost(void) {
 	if(!open) return false;
-	time_t mytime = PHYSFS_getLastModTime(pname);
+	time_t mytime = (time_t)PHYSFS_getLastModTime(pname);
 	/* Convert the stat to a FileStat */
-	struct tm *time;
-	if((time=localtime(&mytime))!=0) {
-		this->time=DOS_PackTime((Bit16u)time->tm_hour,(Bit16u)time->tm_min,(Bit16u)time->tm_sec);
-		this->date=DOS_PackDate((Bit16u)(time->tm_year+1900),(Bit16u)(time->tm_mon+1),(Bit16u)time->tm_mday);
+	struct tm *lctime;
+	if((lctime=localtime(&mytime))!=0) {
+		this->time=DOS_PackTime((Bit16u)lctime->tm_hour,(Bit16u)lctime->tm_min,(Bit16u)lctime->tm_sec);
+		this->date=DOS_PackDate((Bit16u)(lctime->tm_year+1900),(Bit16u)(lctime->tm_mon+1),(Bit16u)lctime->tm_mday);
 	} else {
 		this->time=DOS_PackTime(0,0,0);
 		this->date=DOS_PackDate(1980,1,1);
@@ -732,11 +733,11 @@ bool MSCDEX_HasMediaChanged(Bit8u subUnit);
 bool MSCDEX_GetVolumeName(Bit8u subUnit, char* name);
 
 
-physfscdromDrive::physfscdromDrive(const char driveLetter, const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid, int& error)
+physfscdromDrive::physfscdromDrive(const char letter, const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid, int& error)
 		   :physfsDrive(startdir,_bytes_sector,_sectors_cluster,_total_clusters,_free_clusters,_mediaid)
 {
 	// Init mscdex
-	error = MSCDEX_AddDrive(driveLetter,startdir,subUnit);
+	error = MSCDEX_AddDrive(letter,startdir,subUnit);
 	// Get Volume Label
 	char name[32];
 	if (MSCDEX_GetVolumeName(subUnit,name)) dirCache.SetLabel(name,true,true);
@@ -835,7 +836,7 @@ bool physfscdromDrive::isRemovable(void) {
 }
 
 Bits physfscdromDrive::UnMount(void) {
-	return true;
+	return 0;
 }
 
 #endif // C_HAVE_PHYSFS
