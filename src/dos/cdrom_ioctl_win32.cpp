@@ -18,6 +18,8 @@
 
 /* $Id: cdrom_ioctl_win32.cpp,v 1.16 2009-01-07 22:39:18 c2woody Exp $ */
 
+#include "cdrom.h"
+
 #if defined (WIN32)
 
 // *****************************************************************
@@ -35,8 +37,6 @@
 #endif
 
 #include <mmsystem.h>
-
-#include "cdrom.h"
 
 // for a more sophisticated implementation of the mci cdda functionality
 // see the SDL sources, which the mci_ functions are based on
