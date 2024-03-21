@@ -562,6 +562,7 @@ src/fpu/Makefile
 src/gui/Makefile
 src/hardware/Makefile
 src/hardware/mame/Makefile
+src/hardware/parport/Makefile
 src/hardware/serialport/Makefile
 src/ints/Makefile
 src/libs/Makefile
