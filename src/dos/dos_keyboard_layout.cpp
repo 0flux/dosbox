@@ -84,7 +84,7 @@ public:
 	void switch_foreign_layout();
 	const char* get_layout_name();
 	const char* main_language_code();
-    
+
     //--Added 2012-02-25 by Alun Bestor to support limited on-the-fly layout switching
     bool foreign_layout_active();
     bool is_US_layout();
@@ -327,7 +327,7 @@ Bitu keyboard_layout::read_keyboard_file(const char* keyboard_file_name, Bit32s 
 			LOG(LOG_BIOS,LOG_ERROR)("Invalid keyboard layout file %s",keyboard_file_name);
 			return KEYB_INVALIDFILE;
 		}
-		
+
 		fseek(tempfile, 0, SEEK_SET);
 		read_buf_size=(Bit32u)fread(read_buf, sizeof(Bit8u), 65535, tempfile);
 		fclose(tempfile);
@@ -387,7 +387,7 @@ Bitu keyboard_layout::read_keyboard_file(const char* keyboard_file_name, Bit32s 
 	}
 
 	bool found_matching_layout=false;
-	
+
 	// check all submappings and use them if general submapping or same codepage submapping
 	for (Bit16u sub_map=0; (sub_map<submappings) && (!found_matching_layout); sub_map++) {
 		Bit16u submap_cp, table_offset;
@@ -708,7 +708,7 @@ Bitu keyboard_layout::read_codepage_file(const char* codepage_file_name, Bit32s 
 	if (!strcmp(cp_filename,"auto")) {
 		// select matching .cpi-file for specified codepage
 		switch (codepage_id) {
-			case 437:	case 850:	case 852:	case 853:	case 857:	case 858:	
+			case 437:	case 850:	case 852:	case 853:	case 857:	case 858:
 						sprintf(cp_filename, "EGA.CPI"); break;
 			case 775:	case 859:	case 1116:	case 1117:
 						sprintf(cp_filename, "EGA2.CPI"); break;
@@ -765,7 +765,7 @@ Bitu keyboard_layout::read_codepage_file(const char* codepage_file_name, Bit32s 
 	if (tempfile==NULL) {
 		// check if build-in codepage is available
 		switch (codepage_id) {
-			case 437:	case 850:	case 852:	case 853:	case 857:	case 858:	
+			case 437:	case 850:	case 852:	case 853:	case 857:	case 858:
 						for (Bitu bct=0; bct<6322; bct++) cpi_buf[bct]=font_ega_cpx[bct];
 						cpi_buf_size=6322;
 						break;
@@ -777,7 +777,7 @@ Bitu keyboard_layout::read_codepage_file(const char* codepage_file_name, Bit32s 
 						for (Bitu bct=0; bct<5720; bct++) cpi_buf[bct]=font_ega5_cpx[bct];
 						cpi_buf_size=5720;
 						break;
-			default: 
+			default:
 				return KEYB_INVALIDCPFILE;
 				break;
 		}
@@ -792,10 +792,10 @@ Bitu keyboard_layout::read_codepage_file(const char* codepage_file_name, Bit32s 
 			return KEYB_INVALIDCPFILE;
 		}
 		// check if non-compressed cpi file
-		if ((cpi_buf[0]!=0xff) || (cpi_buf[1]!=0x46) || (cpi_buf[2]!=0x4f) || 
+		if ((cpi_buf[0]!=0xff) || (cpi_buf[1]!=0x46) || (cpi_buf[2]!=0x4f) ||
 			(cpi_buf[3]!=0x4e) || (cpi_buf[4]!=0x54)) {
 			// check if dr-dos custom cpi file
-			if ((cpi_buf[0]==0x7f) && (cpi_buf[1]!=0x44) && (cpi_buf[2]!=0x52) && 
+			if ((cpi_buf[0]==0x7f) && (cpi_buf[1]!=0x44) && (cpi_buf[2]!=0x52) &&
 				(cpi_buf[3]!=0x46) && (cpi_buf[4]!=0x5f)) {
 				LOG(LOG_BIOS,LOG_ERROR)("Codepage file %s has unsupported DR-DOS format",cp_filename);
 				return KEYB_INVALIDCPFILE;
@@ -878,11 +878,11 @@ Bitu keyboard_layout::read_codepage_file(const char* codepage_file_name, Bit32s 
 
 
 	start_pos=host_readd(&cpi_buf[0x13]);
-	
+
 	//--Added 2011-06-20 by Alun Bestor as a sanity check, preventing crashes in the event that a codepage file cannot be parsed
 	if (start_pos > cpi_buf_size) return KEYB_INVALIDCPFILE;
 	//--End of modifications
-	
+
 	number_of_codepages=host_readw(&cpi_buf[start_pos]);
 	start_pos+=4;
 
@@ -1136,7 +1136,7 @@ bool boxer_keyboardLayoutSupported(const char *code)
     {
         //If the current layout supports the specified language code without switching anything, yippee
         if (loaded_layout->supports_language_code(code)) return true;
-    
+
         //If we can safely swap layouts without changing codepages, yippee too
         Bitu detectedCodepage = loaded_layout->extract_codepage(code);
         if (detectedCodepage == dos.loaded_codepage) return true;
@@ -1158,7 +1158,7 @@ void boxer_setKeyboardLayoutActive(bool active)
         //Force-disable US layouts,
         //to match how switch_keyboard_layout() behaves.
         if (loaded_layout->is_US_layout()) active = false;
-        
+
         if (boxer_keyboardLayoutActive() != active)
             loaded_layout->switch_foreign_layout();
     }
@@ -1174,7 +1174,7 @@ public:
 		loaded_layout=new keyboard_layout();
 
 		const char * layoutname=section->Get_string("keyboardlayout");
-        
+
 		Bits wants_dos_codepage = -1;
 		if (!strncmp(layoutname,"auto",4)) {
 #if defined (WIN32)
@@ -1320,15 +1320,15 @@ public:
 				default:
 					break;
 			}
-#endif
-            
+#else
             //--Added 2009-02-23 by Alun Bestor: if auto layout was specified, ask Boxer to provide a layout
             const char *preferredLayout = boxer_preferredKeyboardLayout();
             if (preferredLayout)
                 layoutname = preferredLayout;
             //--End of modifications
+#endif
 		}
-		
+
 		bool extract_codepage = true;
 		if (wants_dos_codepage>0) {
 			if ((loaded_layout->read_codepage_file("auto", (Bitu)wants_dos_codepage)) == KEYB_NOERROR) {
@@ -1341,7 +1341,7 @@ public:
 			Bitu req_codepage = loaded_layout->extract_codepage(layoutname);
 			loaded_layout->read_codepage_file("auto", req_codepage);
 		}
-        
+
 /*		if (strncmp(layoutname,"auto",4) && strncmp(layoutname,"none",4)) {
 			LOG_MSG("Loading DOS keyboard layout %s ...",layoutname);
 		} */
@@ -1355,7 +1355,7 @@ public:
 				LOG_MSG("DOS keyboard layout loaded with main language code %s for layout %s",lcode,layoutname);
 			}
 		}
-        
+
         //--Added 2012-05-21 by Alun Bestor to fix US-858 layout loading up with keyboard remapping enabled.
         if (loaded_layout->is_US_layout() && loaded_layout->foreign_layout_active())
         {
@@ -1379,7 +1379,7 @@ public:
 static DOS_KeyboardLayout* test;
 
 void DOS_KeyboardLayout_ShutDown(Section* /*sec*/) {
-	delete test;	
+	delete test;
 }
 
 void DOS_KeyboardLayout_Init(Section* sec) {

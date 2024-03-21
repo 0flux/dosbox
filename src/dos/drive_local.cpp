@@ -31,25 +31,8 @@
 #include "cross.h"
 #include "inout.h"
 
-class localFile : public DOS_File {
-public:
-	localFile(const char* name, FILE * handle);
-	bool Read(Bit8u * data,Bit16u * size);
-	bool Write(Bit8u * data,Bit16u * size);
-	bool Seek(Bit32u * pos,Bit32u type);
-	bool Close();
-	Bit16u GetInformation(void);
-	bool UpdateDateTimeFromHost(void);   
-	void FlagReadOnlyMedium(void);
-    //--Added 2011-11-03 by Alun Bestor to let Boxer inform open file handles
-    //that their physical backing media will be removed.
-    void willBecomeUnavailable(void);
-    //--End of modifications
-private:
-	FILE * fhandle;
-	bool read_only_medium;
-	enum { NONE,READ,WRITE } last_action;
-};
+#include "drive_local_gboxer.h"
+#include "Coalface.h"
 
 
 bool localDrive::FileCreate(DOS_File * * file,const char * name,Bit16u /*attributes*/) {
@@ -61,7 +44,7 @@ bool localDrive::FileCreate(DOS_File * * file,const char * name,Bit16u /*attribu
 	char* temp_name = dirCache.GetExpandName(newname); //Can only be used in till a new drive_cache action is preformed */
 	/* Test if file exists (so we need to truncate it). don't add to dirCache then */
 	bool existing_file=false;
-	
+
 	//--Added 2010-01-18 by Alun Bestor to allow Boxer to selectively deny write access to files
 	if (!boxer_shouldAllowWriteAccessToPath((const char *)newname, this))
 	{
@@ -69,26 +52,26 @@ bool localDrive::FileCreate(DOS_File * * file,const char * name,Bit16u /*attribu
 		return false;
 	}
 	//--End of modifications
-	
-    //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
-	//FILE * test=fopen(temp_name,"rb+");
-    FILE * test=boxer_openLocalFile(temp_name, this, "rb+");
-    //--End of modifications
-	if(test) {
-		fclose(test);
-		existing_file=true;
 
+  //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
+	//FILE * test=fopen(temp_name,"rb+");
+	ADB::VFILE *test = GBoxer::Coalface::open_local_file(temp_name, this, "rb+");
+  //--End of modifications
+	if(test) {
+		// fclose(test);
+		GBoxer::Coalface::close_local_file(test);
+		existing_file=true;
 	}
-	
-    //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
+
+  //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
 	//FILE * hand=fopen(temp_name,"wb+");
-    FILE * hand=boxer_openLocalFile(temp_name, this, "wb+");
-    //--End of modifications
+	ADB::VFILE *hand = GBoxer::Coalface::open_local_file(temp_name, this, "wb+");
+  //--End of modifications
 	if (!hand){
 		LOG_MSG("Warning: file creation failed: %s",newname);
 		return false;
 	}
-   
+
 	if(!existing_file) {
 		strcpy(newname,basedir);
 		strcat(newname,name);
@@ -96,11 +79,19 @@ bool localDrive::FileCreate(DOS_File * * file,const char * name,Bit16u /*attribu
 		dirCache.AddEntry(newname, true);
 	}
 
+	/*
+	FileStat_Block statBlock;
+	bool gotStat = FileStat(name, &statBlock);
+	if (!gotStat) {
+		LOG_MSG("Warning: FileStat FAILED!!!");
+	}
+	*/
+
 	/* Make the 16 bit device information */
-	*file=new localFile(name,hand);
-	(*file)->flags=OPEN_READWRITE;
-	
-	
+	*file = new GBoxer::LocalFile(name, hand);
+	(*file)->flags = OPEN_READWRITE;
+
+
 	//--Added 2010-08-21 by Alun Bestor to let Boxer monitor DOSBox's file operations
 	boxer_didCreateLocalFile(temp_name, this);
 	//--End of modifications
@@ -135,51 +126,59 @@ bool localDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
 			} else {
 				DOS_SetError(DOSERR_ACCESS_DENIED);
 				return false;
-			}			
+			}
 		}
 	}
 	//--End of modifications
-    
-    //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
+
+  //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
 	//FILE * hand=fopen(newname,type);
-    FILE * hand=boxer_openLocalFile(newname, this, type);
-    //--End of modifications
-    
-//	Bit32u err=errno;
-	if (!hand) { 
+	ADB::VFILE *hand = GBoxer::Coalface::open_local_file(newname, this, type);
+  //--End of modifications
+
+	// Bit32u err=errno;
+	if (!hand) {
 		if((flags&0xf) != OPEN_READ) {
-            
-            //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
-            //FILE * hmm=fopen(newname,"rb");
-            FILE * hmm=boxer_openLocalFile(newname, this, "rb");
-            //--End of modifications
-            
+
+			//-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
+			//FILE * hmm=fopen(newname,"rb");
+			ADB::VFILE *hmm = GBoxer::Coalface::open_local_file(newname, this, "rb");
+			//--End of modifications
+
 			if (hmm) {
-				fclose(hmm);
+				// fclose(hmm);
+				GBoxer::Coalface::close_local_file(hmm);
 				LOG_MSG("Warning: file %s exists and failed to open in write mode.\nPlease Remove write-protection",newname);
 			}
 		}
 		return false;
 	}
 
-	*file=new localFile(name,hand);
-	(*file)->flags=flags;  //for the inheritance flag and maybe check for others.
+	/*
+	FileStat_Block statBlock;
+	bool gotStat = FileStat(name, &statBlock);
+	if (!gotStat) {
+		LOG_MSG("Warning: FileStat FAILED!!!");
+	}
+	*/
+
+	*file = new GBoxer::LocalFile(name, hand);
+	(*file)->flags = flags;  //for the inheritance flag and maybe check for others.
 //	(*file)->SetFileName(newname);
 	return true;
 }
 
 FILE * localDrive::GetSystemFilePtr(char const * const name, char const * const type) {
-
 	char newname[CROSS_LEN];
 	strcpy(newname,basedir);
 	strcat(newname,name);
 	CROSS_FILENAME(newname);
 	dirCache.ExpandName(newname);
-    
-    //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
-	//return fopen(newname,type);
-    return boxer_openLocalFile(newname, this, type);
-    //--End of modifications
+
+  //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
+	return fopen(newname, type);
+	// return GBoxer::Coalface::open_local_file(newname, this, type);
+  //--End of modifications
 }
 
 bool localDrive::GetSystemFilename(char *sysName, char const * const dosName) {
@@ -197,7 +196,7 @@ bool localDrive::FileUnlink(const char * name) {
 	strcat(newname,name);
 	CROSS_FILENAME(newname);
 	char *fullname = dirCache.GetExpandName(newname);
-	
+
 	//--Added 2010-12-29 by Alun Bestor to let Boxer selectively prevent file operations
 	if (!boxer_shouldAllowWriteAccessToPath((const char *)fullname, this))
 	{
@@ -205,20 +204,21 @@ bool localDrive::FileUnlink(const char * name) {
 		return false;
 	}
 	//--End of modifications
-	
-    //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
+
+  //-- Modified 2012-07-24 by Alun Bestor to allow Boxer to shadow local file access
 	//if (unlink(fullname)) {
-    if (!boxer_removeLocalFile(fullname, this)) {
+	if (!boxer_removeLocalFile(fullname, this)) {
 		//Unlink failed for some reason try finding it.
 		struct stat buffer;
-        //if(stat(fullname,&buffer)) return false; // File not found.
-        if (!boxer_getLocalPathStats(fullname, this, &buffer)) return false;
-		
+		//if(stat(fullname,&buffer)) return false; // File not found.
+		if (!boxer_getLocalPathStats(fullname, this, &buffer)) return false;
+
 		//FILE* file_writable = fopen(fullname,"rb+");
-        FILE* file_writable = boxer_openLocalFile(fullname, this, "rb+");
-        
+		ADB::VFILE *file_writable = GBoxer::Coalface::open_local_file(fullname, this, "rb+");
+
 		if(!file_writable) return false; //No acces ? ERROR MESSAGE NOT SET. FIXME ?
-		fclose(file_writable);
+		// fclose(file_writable);
+		GBoxer::Coalface::close_local_file(file_writable);
 
 		//File exists and can technically be deleted, nevertheless it failed.
 		//This means that the file is probably open by some process.
@@ -236,19 +236,19 @@ bool localDrive::FileUnlink(const char * name) {
 		}
 		if(!found_file) return false;
 		//if (!unlink(fullname)) {
-        if (boxer_removeLocalFile(fullname, this)) {
+		if (boxer_removeLocalFile(fullname, this)) {
 			dirCache.DeleteEntry(newname);
-			
+
 			//--Added 2010-08-21 by Alun Bestor to let Boxer monitor DOSBox's file operations
 			boxer_didRemoveLocalFile(fullname, this);
 			//--End of modifications
 			return true;
 		}
-		return false;        
-//--End of modifications
+		return false;
+	//--End of modifications
 	} else {
 		dirCache.DeleteEntry(newname);
-		
+
 		//--Added 2010-08-21 by Alun Bestor to let Boxer monitor DOSBox's file operations
 		boxer_didRemoveLocalFile(fullname, this);
 		//--End of modifications
@@ -265,10 +265,10 @@ bool localDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
 	if (allocation.mediaid==0xF0 ) {
 		EmptyCache(); //rescan floppie-content on each findfirst
 	}
-    
+
 	char end[2]={CROSS_FILESPLIT,0};
 	if (tempDir[strlen(tempDir)-1]!=CROSS_FILESPLIT) strcat(tempDir,end);
-	
+
 	Bit16u id;
 	if (!dirCache.FindFirst(tempDir,id)) {
 		DOS_SetError(DOSERR_PATH_NOT_FOUND);
@@ -276,7 +276,7 @@ bool localDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
 	}
 	strcpy(srchInfo[id].srch_dir,tempDir);
 	dta.SetDirID(id);
-	
+
 	Bit8u sAttr;
 	dta.GetSearchParams(sAttr,tempDir);
 
@@ -297,7 +297,7 @@ bool localDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
 			}
 			dta.SetResult(dirCache.GetLabel(),0,0,0,DOS_ATTR_VOLUME);
 			return true;
-		} else if ((sAttr & DOS_ATTR_VOLUME)  && (*_dir == 0) && !fcb_findfirst) { 
+		} else if ((sAttr & DOS_ATTR_VOLUME)  && (*_dir == 0) && !fcb_findfirst) {
 		//should check for a valid leading directory instead of 0
 		//exists==true if the volume label matches the searchmask and the path is valid
 			if (WildFileCmp(dirCache.GetLabel(),tempDir)) {
@@ -331,29 +331,29 @@ again:
 
 	strcpy(full_name,srchInfo[id].srch_dir);
 	strcat(full_name,dir_ent);
-	
-	//GetExpandName might indirectly destroy dir_ent (by caching in a new directory 
+
+	//GetExpandName might indirectly destroy dir_ent (by caching in a new directory
 	//and due to its design dir_ent might be lost.)
 	//Copying dir_ent first
 	strcpy(dir_entcopy,dir_ent);
     //Modified 2012-07-24 by Alun Bestor to wrap local file operations
-	//if (stat(dirCache.GetExpandName(full_name),&stat_block)!=0) { 
+	//if (stat(dirCache.GetExpandName(full_name),&stat_block)!=0) {
     if (!boxer_getLocalPathStats(dirCache.GetExpandName(full_name), this, &stat_block)) {
     //--End of modifications
 		goto again;//No symlinks and such
-	}	
+	}
 
 	if(stat_block.st_mode & S_IFDIR) find_attr=DOS_ATTR_DIRECTORY;
 	else find_attr=DOS_ATTR_ARCHIVE;
  	if (~srch_attr & find_attr & (DOS_ATTR_DIRECTORY | DOS_ATTR_HIDDEN | DOS_ATTR_SYSTEM)) goto again;
-	
+
 	/*file is okay, setup everything to be copied in DTA Block */
 	char find_name[DOS_NAMELENGTH_ASCII];Bit16u find_date,find_time;Bit32u find_size;
 
 	if(strlen(dir_entcopy)<DOS_NAMELENGTH_ASCII){
 		strcpy(find_name,dir_entcopy);
 		upcase(find_name);
-	} 
+	}
 
 	find_size=(Bit32u) stat_block.st_size;
 	struct tm *time;
@@ -361,7 +361,7 @@ again:
 		find_date=DOS_PackDate((Bit16u)(time->tm_year+1900),(Bit16u)(time->tm_mon+1),(Bit16u)time->tm_mday);
 		find_time=DOS_PackTime((Bit16u)time->tm_hour,(Bit16u)time->tm_min,(Bit16u)time->tm_sec);
 	} else {
-		find_time=6; 
+		find_time=6;
 		find_date=4;
 	}
 	dta.SetResult(find_name,find_size,find_date,find_time,find_attr);
@@ -376,9 +376,9 @@ bool localDrive::GetFileAttr(const char * name,Bit16u * attr) {
 	dirCache.ExpandName(newname);
 
 	struct stat status;
-    
+
     //Modified 2012-07-24 by Alun Bestor to wrap local file operations
-	//if (stat(newname,&status)==0) { 
+	//if (stat(newname,&status)==0) {
     if (boxer_getLocalPathStats(newname, this, &status)) {
     //--End of modifications
 		*attr=DOS_ATTR_ARCHIVE;
@@ -386,7 +386,7 @@ bool localDrive::GetFileAttr(const char * name,Bit16u * attr) {
 		return true;
 	}
 	*attr=0;
-	return false; 
+	return false;
 }
 
 bool localDrive::MakeDir(const char * dir) {
@@ -395,7 +395,7 @@ bool localDrive::MakeDir(const char * dir) {
 	strcat(newdir,dir);
 	CROSS_FILENAME(newdir);
 	char * fullname=dirCache.GetExpandName(newdir);
-	
+
 	//--Modified 2010-12-29 by Alun Bestor to allow Boxer to selectively prevent file operations,
 	//and to prevent DOSBox from creating folders with the wrong file permissions.
 	/*
@@ -405,7 +405,7 @@ bool localDrive::MakeDir(const char * dir) {
 	 int temp=mkdir(fullname,0700);
 	 #endif
 	 */
-	
+
 	if (!boxer_shouldAllowWriteAccessToPath((const char *)fullname, this))
 	{
 		DOS_SetError(DOSERR_ACCESS_DENIED);
@@ -415,12 +415,12 @@ bool localDrive::MakeDir(const char * dir) {
 	//int temp=mkdir(fullname, 0777);
 	//if (temp==0) dirCache.CacheOut(newdir,true);
 	//return (temp==0);// || ((temp!=0) && (errno==EEXIST));
-    
+
     bool created = boxer_createLocalDir(fullname, this);
     if (created) dirCache.CacheOut(newdir,true);
     return created;
 	//--End of modifications
-	
+
 }
 
 bool localDrive::RemoveDir(const char * dir) {
@@ -428,20 +428,20 @@ bool localDrive::RemoveDir(const char * dir) {
 	strcpy(newdir,basedir);
 	strcat(newdir,dir);
 	CROSS_FILENAME(newdir);
-	
+
 	//--Modified 2010-12-29 by Alun Bestor to allow Boxer to selectively prevent file operations
 	char *fullname = dirCache.GetExpandName(newdir);
-	
+
 	if (!boxer_shouldAllowWriteAccessToPath((const char *)fullname, this))
 	{
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}
-	
+
 	//int temp=rmdir(fullname);
 	//if (temp==0) dirCache.DeleteEntry(newdir,true);
     //return (temp==0);
-    
+
     bool removed = boxer_removeLocalDir(fullname, this);
 	if (removed) dirCache.DeleteEntry(newdir,true);
     return removed;
@@ -454,7 +454,7 @@ bool localDrive::TestDir(const char * dir) {
 	strcat(newdir,dir);
 	CROSS_FILENAME(newdir);
 	dirCache.ExpandName(newdir);
-    
+
 	//--Modified 2012-04-27 by Alun Bestor to wrap local file operations
     /*
 	// Skip directory test, if "\"
@@ -478,13 +478,13 @@ bool localDrive::Rename(const char * oldname,const char * newname) {
 	strcat(newold,oldname);
 	CROSS_FILENAME(newold);
 	dirCache.ExpandName(newold);
-	
+
 	char newnew[CROSS_LEN];
 	strcpy(newnew,basedir);
 	strcat(newnew,newname);
 	CROSS_FILENAME(newnew);
 	char *fullname = dirCache.GetExpandName(newnew);
-	
+
 	//--Modified 2012-04-27 by Alun Bestor to wrap local file operations
 	if (!boxer_shouldAllowWriteAccessToPath((const char *)newold, this) ||
 		!boxer_shouldAllowWriteAccessToPath((const char *)fullname, this))
@@ -492,7 +492,7 @@ bool localDrive::Rename(const char * oldname,const char * newname) {
 		DOS_SetError(DOSERR_ACCESS_DENIED);
 		return false;
 	}
-	
+
 	//int temp=rename(newold,fullname);
     //if (temp==0) dirCache.CacheOut(newnew);
 	//return (temp==0);
@@ -519,14 +519,14 @@ bool localDrive::FileExists(const char* name) {
 	strcat(newname,name);
 	CROSS_FILENAME(newname);
 	dirCache.ExpandName(newname);
-    
+
 	//--Modified 2012-04-27 by Alun Bestor to wrap local file operations
 	//FILE* Temp=fopen(newname,"rb");
 	//if(Temp==NULL) return false;
 	//fclose(Temp);
 	//return true;
-    return boxer_localFileExists(newname, this);
-    //--End of modifications
+  return boxer_localFileExists(newname, this);
+  //--End of modifications
 }
 
 bool localDrive::FileStat(const char* name, FileStat_Block * const stat_block) {
@@ -536,12 +536,12 @@ bool localDrive::FileStat(const char* name, FileStat_Block * const stat_block) {
 	CROSS_FILENAME(newname);
 	dirCache.ExpandName(newname);
 	struct stat temp_stat;
-    
+
 	//--Modified 2012-04-27 by Alun Bestor to wrap local file operations
 	//if(stat(newname,&temp_stat)!=0) return false;
     if (!boxer_getLocalPathStats(newname, this, &temp_stat)) return false;
     //--End of modifications
-    
+
 	/* Convert the stat to a FileStat */
 	struct tm *time;
 	if((time=localtime(&temp_stat.st_mtime))!=0) {
@@ -567,31 +567,31 @@ bool localDrive::isRemovable(void) {
 	return false;
 }
 
-Bits localDrive::UnMount(void) { 
+Bits localDrive::UnMount(void) {
 	delete this;
-	return 0; 
+	return 0;
 }
 
 /* helper functions for drive cache */
 //--Modified 2012-07-25 by Alun Bestor to wrap local filesystem access
 void *localDrive::opendir(const char *name) {
-	//return open_directory(name);
-    return boxer_openLocalDirectory(name, this);
+	// return open_directory(name);
+	return boxer_openLocalDirectory(name, this);
 }
 
 void localDrive::closedir(void *handle) {
-	//close_directory((dir_information*)handle);
-    boxer_closeLocalDirectory(handle);
+	// close_directory((dir_information*)handle);
+	boxer_closeLocalDirectory(handle);
 }
 
 bool localDrive::read_directory_first(void *handle, char* entry_name, bool& is_directory) {
-	//return ::read_directory_first((dir_information*)handle, entry_name, is_directory);
-    return boxer_getNextDirectoryEntry(handle, entry_name, is_directory);
+	// return ::read_directory_first((dir_information*)handle, entry_name, is_directory);
+	return boxer_getNextDirectoryEntry(handle, entry_name, is_directory);
 }
 
 bool localDrive::read_directory_next(void *handle, char* entry_name, bool& is_directory) {
-	//return ::read_directory_next((dir_information*)handle, entry_name, is_directory);
-    return boxer_getNextDirectoryEntry(handle, entry_name, is_directory);
+	// return ::read_directory_next((dir_information*)handle, entry_name, is_directory);
+	return boxer_getNextDirectoryEntry(handle, entry_name, is_directory);
 }
 //--End of modifications
 
@@ -603,181 +603,13 @@ localDrive::localDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors
 	allocation.total_clusters=_total_clusters;
 	allocation.free_clusters=_free_clusters;
 	allocation.mediaid=_mediaid;
-	
+
 	//--Added 2009-10-25 by Alun Bestor to allow Boxer to track the system path for DOSBox drives
 	strcpy(systempath, startdir);
 	//--End of modifications
-	
+
 	dirCache.SetBaseDir(basedir,this);
 }
-
-
-//TODO Maybe use fflush, but that seemed to fuck up in visual c
-bool localFile::Read(Bit8u * data,Bit16u * size) {
-	if ((this->flags & 0xf) == OPEN_WRITE) {	// check if file opened in write-only mode
-		DOS_SetError(DOSERR_ACCESS_DENIED);
-		return false;
-	}
-    
-    //--Added 2011-11-03 by Alun Bestor to avoid errors on files
-    //whose backing media has disappeared
-    if (!fhandle)
-    {
-        *size = 0;
-        //IMPLEMENTATION NOTE: you might think we ought to return false here,
-        //but no! We return true to be consistent with DOSBox's behaviour,
-        //which appears to be the behaviour expected by DOS.
-        return true;
-    }
-    //--End of modifications
-    
-	if (last_action==WRITE) fseek(fhandle,ftell(fhandle),SEEK_SET);
-	last_action=READ;
-	*size=(Bit16u)fread(data,1,*size,fhandle);
-	/* Fake harddrive motion. Inspector Gadget with soundblaster compatible */
-	/* Same for Igor */
-	/* hardrive motion => unmask irq 2. Only do it when it's masked as unmasking is realitively heavy to emulate */
-	Bit8u mask = IO_Read(0x21);
-	if(mask & 0x4 ) IO_Write(0x21,mask&0xfb);
-	return true;
-}
-
-bool localFile::Write(Bit8u * data,Bit16u * size) {
-	if ((this->flags & 0xf) == OPEN_READ) {	// check if file opened in read-only mode
-		DOS_SetError(DOSERR_ACCESS_DENIED);
-		return false;
-	}
-    
-    //--Added 2011-11-03 by Alun Bestor to avoid errors on files
-    //whose backing media has disappeared
-    if (!fhandle)
-    {
-        *size = 0;
-        //IMPLEMENTATION NOTE: you might think we ought to return false here,
-        //but no! We return true to be consistent with DOSBox's behaviour,
-        //which appears to be the behaviour expected by DOS.
-        return true;
-    }
-    //--End of modifications
-    
-	if (last_action==READ) fseek(fhandle,ftell(fhandle),SEEK_SET);
-	last_action=WRITE;
-	if(*size==0){  
-        return (!ftruncate(fileno(fhandle),ftell(fhandle)));
-    }
-    else 
-    {
-		*size=(Bit16u)fwrite(data,1,*size,fhandle);
-		return true;
-    }
-}
-
-bool localFile::Seek(Bit32u * pos,Bit32u type) {
-	int seektype;
-    
-	switch (type) {
-	case DOS_SEEK_SET:seektype=SEEK_SET;break;
-	case DOS_SEEK_CUR:seektype=SEEK_CUR;break;
-	case DOS_SEEK_END:seektype=SEEK_END;break;
-	default:
-	//TODO Give some doserrorcode;
-		return false;//ERROR
-	}
-    
-    //--Added 2011-11-03 by Alun Bestor to avoid errors on files
-    //whose backing media has disappeared
-    if (!fhandle)
-    {
-        *pos = 0;
-        //IMPLEMENTATION NOTE: you might think we ought to return false here,
-        //but no! We return true to be consistent with DOSBox's behaviour,
-        //which appears to be the behaviour expected by DOS.
-        return true;
-    }
-    //--End of modifications
-    
-	int ret=fseek(fhandle,*reinterpret_cast<Bit32s*>(pos),seektype);
-	if (ret!=0) {
-		// Out of file range, pretend everythings ok 
-		// and move file pointer top end of file... ?! (Black Thorne)
-		fseek(fhandle,0,SEEK_END);
-	};
-#if 0
-	fpos_t temppos;
-	fgetpos(fhandle,&temppos);
-	Bit32u * fake_pos=(Bit32u*)&temppos;
-	*pos=*fake_pos;
-#endif
-	*pos=(Bit32u)ftell(fhandle);
-	last_action=NONE;
-	return true;
-}
-
-bool localFile::Close() {
-	// only close if one reference left
-	if (refCtr==1) {
-		if(fhandle) fclose(fhandle);
-		fhandle = 0;
-		open = false;
-	};
-	return true;
-}
-
-Bit16u localFile::GetInformation(void) {
-	return read_only_medium?0x40:0;
-}
-	
-
-localFile::localFile(const char* _name, FILE * handle) {
-	fhandle=handle;
-	open=true;
-	UpdateDateTimeFromHost();
-
-	attr=DOS_ATTR_ARCHIVE;
-	last_action=NONE;
-	read_only_medium=false;
-
-	name=0;
-	SetName(_name);
-}
-
-void localFile::FlagReadOnlyMedium(void) {
-	read_only_medium = true;
-}
-
-bool localFile::UpdateDateTimeFromHost(void) {
-	if(!open) return false;
-    
-    //--Added 2011-11-03 by Alun Bestor to avoid errors on closed files
-    if (!fhandle) return false;
-    //--End of modifications
-    
-	struct stat temp_stat;
-	fstat(fileno(fhandle),&temp_stat);
-	struct tm * ltime;
-	if((ltime=localtime(&temp_stat.st_mtime))!=0) {
-		time=DOS_PackTime((Bit16u)ltime->tm_hour,(Bit16u)ltime->tm_min,(Bit16u)ltime->tm_sec);
-		date=DOS_PackDate((Bit16u)(ltime->tm_year+1900),(Bit16u)(ltime->tm_mon+1),(Bit16u)ltime->tm_mday);
-	} else {
-		time=1;date=1;
-	}
-	return true;
-}
-
-//--Added 2011-11-03 by Alun Bestor to let Boxer inform open file handles
-//that their physical backing media will be removed.
-void localFile::willBecomeUnavailable()
-{
-    //If the real file is about to become unavailable, then close
-    //our file handle but leave the DOS file flagged as 'open'.
-    if (fhandle)
-    {
-		fclose(fhandle);
-		fhandle = 0;
-    }
-}
-//--End of modification
-
 
 
 // ********************************************
@@ -810,7 +642,7 @@ bool cdromDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
 		return false;
 	}
 	bool retcode = localDrive::FileOpen(file,name,flags);
-	if(retcode) (dynamic_cast<localFile*>(*file))->FlagReadOnlyMedium();
+	if(retcode) (dynamic_cast<GBoxer::LocalFile*>(*file))->FlagReadOnlyMedium();
 	return retcode;
 }
 

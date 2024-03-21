@@ -18,21 +18,22 @@
 
 /* $Id: cdrom_aspi_win32.cpp,v 1.21 2009-05-27 09:15:41 qbix79 Exp $ */
 
-#if defined (WIN32)
-
-#include <ctype.h>
-
-#include "dosbox.h"
 #include "cdrom.h"
 #include "support.h"
 
+#if defined (WIN32)
+
 //Are actually system includes but leave for now
-#include "wnaspi32.h"
+//#include "wnaspi32.h"
 
 #if defined (_MSC_VER)
 #include <ntddcdrm.h>			// Ioctl stuff
 #include <ntddscsi.h>
 #include <winioctl.h>			// Ioctl stuff
+#elif (defined __MINGW64_VERSION_MAJOR)
+#include <winioctl.h>			// Ioctl stuff
+#include <ntddcdrm.h>			// Ioctl stuff
+#include <ntddscsi.h>
 #else 
 #include "ddk/ntddcdrm.h"		// Ioctl stuff
 #include "ddk/ntddscsi.h"

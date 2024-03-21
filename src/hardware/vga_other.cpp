@@ -224,7 +224,7 @@ static void IncreaseHue(bool pressed) {
 		return;
 	hue_offset += 5.0;
 	update_cga16_color();
-	LOG_MSG("Hue at %f",hue_offset); 
+	LOG_MSG("Hue at %f",hue_offset);
 }
 
 static void DecreaseHue(bool pressed) {
@@ -232,7 +232,7 @@ static void DecreaseHue(bool pressed) {
 		return;
 	hue_offset -= 5.0;
 	update_cga16_color();
-	LOG_MSG("Hue at %f",hue_offset); 
+	LOG_MSG("Hue at %f",hue_offset);
 }
 
 static void write_color_select(Bit8u val) {
@@ -269,9 +269,9 @@ static void write_color_select(Bit8u val) {
 
 static void TANDY_FindMode(void) {
 	if (vga.tandy.mode_control & 0x2) {
-		if (vga.tandy.gfx_control & 0x10) 
+		if (vga.tandy.gfx_control & 0x10)
 			VGA_SetMode(M_TANDY16);
-		else if (vga.tandy.gfx_control & 0x08) 
+		else if (vga.tandy.gfx_control & 0x08)
 			VGA_SetMode(M_TANDY4);
 		else if (vga.tandy.mode_control & 0x10)
 			VGA_SetMode(M_TANDY2);
@@ -360,7 +360,7 @@ static void write_tandy_reg(Bit8u val) {
 	case 0x1c: case 0x1d: case 0x1e: case 0x1f:
 		VGA_ATTR_SetPalette(vga.tandy.reg_index-0x10,val & 0xf);
 		break;
-	default:		
+	default:
 		LOG(LOG_VGAMISC,LOG_NORMAL)("Unhandled Write %2X to tandy reg %X",val,vga.tandy.reg_index);
 	}
 }
@@ -369,7 +369,7 @@ static void write_cga(Bitu port,Bitu val,Bitu /*iolen*/) {
 	switch (port) {
 	case 0x3d8:
 		vga.tandy.mode_control=(Bit8u)val;
-		vga.attr.disabled = (val&0x8)? 0: 1; 
+		vga.attr.disabled = (val&0x8)? 0: 1;
 		if (vga.tandy.mode_control & 0x2) {
 			if (vga.tandy.mode_control & 0x10) {
 				if (!(val & 0x4) && machine==MCH_CGA) {
@@ -410,11 +410,11 @@ static void write_tandy(Bitu port,Bitu val,Bitu /*iolen*/) {
 	case 0x3dc:	// Preset lightpen latch
 		if (!vga.other.lightpen_triggered) {
 			vga.other.lightpen_triggered = true; // TODO: this shows at port 3ba/3da bit 1
-			
+
 			double timeInFrame = PIC_FullIndex()-vga.draw.delay.framestart;
 			double timeInLine = fmod(timeInFrame,vga.draw.delay.htotal);
 			Bitu current_scanline = (Bitu)(timeInFrame / vga.draw.delay.htotal);
-			
+
 			vga.other.lightpen = (Bit16u)((vga.draw.address_add/2) * (current_scanline/2));
 			vga.other.lightpen += (Bit16u)((timeInLine / vga.draw.delay.hdend) *
 				((float)(vga.draw.address_add/2)));
@@ -463,8 +463,8 @@ static void CycleHercPal(bool pressed) {
 	Herc_Palette();
 	VGA_DAC_CombineColor(1,7);
 }
-	
-void Herc_Palette(void) {	
+
+void Herc_Palette(void) {
 	switch (herc_pal) {
 	case 0:	// White
 		VGA_DAC_SetEntry(0x7,0x2a,0x2a,0x2a);
@@ -484,7 +484,7 @@ void Herc_Palette(void) {
 static void write_hercules(Bitu port,Bitu val,Bitu /*iolen*/) {
 	switch (port) {
 	case 0x3b8: {
-		// the protected bits can always be cleared but only be set if the 
+		// the protected bits can always be cleared but only be set if the
 		// protection bits are set
 		if (vga.herc.mode_control&0x2) {
 			// already set
@@ -651,11 +651,54 @@ void boxer_setHerculesTintMode(Bit8u mode)
         herc_pal = mode % 3;
         if (machine == MCH_HERC)
         {
-            Herc_Palette();
+			//--Modified 2021-01-09 by Ismail Khatib
+            // Herc_Palette();
+			switch (herc_pal) {
+			case 0:	// White
+				VGA_DAC_SetEntry(0x7,0x2a,0x2a,0x2a);
+				VGA_DAC_SetEntry(0xf,0x3f,0x3f,0x3f);
+				break;
+			case 1:	// Amber
+				VGA_DAC_SetEntry(0x7,0x34,0x20,0x00);
+				VGA_DAC_SetEntry(0xf,0x3f,0x34,0x00);
+				break;
+			case 2:	// Green
+				// VGA_DAC_SetEntry(0x7,0x00,0x26,0x00);
+				// VGA_DAC_SetEntry(0xf,0x00,0x3f,0x00);
+				VGA_DAC_SetEntry(0x7,0x0a,0xaa,0x48);
+				VGA_DAC_SetEntry(0xf,0x0c,0xcc,0x68);
+				break;
+			}
+			//--End of modifications
             VGA_DAC_CombineColor(1,7);
         }
     }
 }
+
+/*
+text: "Default Amber"
+  "brightness": 0.5,
+  "fontColor": "#ff8100",
+
+text: "Monochrome Green"
+  "brightness": 0.5,
+  "fontColor": "#0ccc68",
+
+text: "Green Scanlines"
+  "brightness": 0.5,
+  "fontColor": "#7cff4f",
+
+text: "Apple ]["
+  "brightness": 0.5,
+  "fontColor": "#00d56d",
+
+text: "Vintage"
+  "brightness": 0.5,
+  "fontColor": "#00ff3e",
+
+text: "IBM Dos"
+  "fontColor": "#00ff3e",
+*/
 
 double boxer_CGACompositeHueOffset()
 {
