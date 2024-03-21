@@ -1,0 +1,14 @@
+autom4te.cache/*
+.history/*
+build/*
+patches/*
+Makefile.in
+missing
+install-sh
+depcomp
+configure
+config.sub
+config.h.in
+config.guess
+compile
+aclocal.m4
