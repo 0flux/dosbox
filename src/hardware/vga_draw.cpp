@@ -611,7 +611,7 @@ static Bit8u * VGA_TEXT_Xlat16_Draw_Line_9(Bitu vidstart, Bitu line) {
 		if (line<vga.draw.cursor.sline) goto skip_cursor;
 		if (line>vga.draw.cursor.eline) goto skip_cursor;
 		draw=(Bit16u*)&TempLine[font_addr*18];
-		Bit8u fg=vga.tandy.draw_base[vga.draw.cursor.address+1]&0xf;
+		fg=vga.tandy.draw_base[vga.draw.cursor.address+1]&0xf;
 		for(int i = 0; i < 8; i++) {
 			*draw++ = vga.dac.xlat16[fg];
 		}
@@ -883,7 +883,7 @@ static void VGA_VerticalTimer(Bitu /*val*/) {
 #endif
 
 	// check if some lines at the top off the screen are blanked
-	float draw_skip = 0.0;
+	float draw_skip = 0.0f;
 	if (GCC_UNLIKELY(vga.draw.vblank_skip)) {
 		draw_skip = (float)(vga.draw.delay.htotal * vga.draw.vblank_skip);
 		vga.draw.address += vga.draw.address_add * (vga.draw.vblank_skip/(vga.draw.address_line_total));

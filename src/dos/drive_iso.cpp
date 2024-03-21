@@ -46,8 +46,8 @@ private:
 	Bit16u info;
 };
 
-isoFile::isoFile(isoDrive *drive, const char *name, FileStat_Block *stat, Bit32u offset) {
-	this->drive = drive;
+isoFile::isoFile(isoDrive *drv, const char *filename, FileStat_Block *stat, Bit32u offset) {
+	this->drive = drv;
 	time = stat->time;
 	date = stat->date;
 	attr = stat->attr;
@@ -57,7 +57,7 @@ isoFile::isoFile(isoDrive *drive, const char *name, FileStat_Block *stat, Bit32u
 	cachedSector = -1;
 	open = true;
 	this->name = NULL;
-	SetName(name);
+	SetName(filename);
 }
 
 bool isoFile::Read(Bit8u *data, Bit16u *size) {

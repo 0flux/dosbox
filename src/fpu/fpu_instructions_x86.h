@@ -1222,7 +1222,7 @@ static void FPU_FST_I32(PhysPt addr) {
 }
 
 static void FPU_FST_I64(PhysPt addr) {
-	FPUD_STORE(fistp,QWORD,q)
+	FPUD_STORE(fistp,QWORD,ll)
 	mem_writed(addr,fpu.p_regs[8].m1);
 	mem_writed(addr+4,fpu.p_regs[8].m2);
 }
