@@ -1,0 +1,1945 @@
+From 284136b7abda3de72854ccb15d7a203e1330b715 Mon Sep 17 00:00:00 2001
+From: Ismail Khatib <ikhatib@gmail.com>
+Date: Thu, 21 Mar 2024 04:17:02 +0100
+Subject: [PATCH] Apply PhysFS patch
+
+---
+ configure.in              |   9 +
+ include/dos_system.h      |  39 +-
+ src/dos/Makefile.am       |   2 +-
+ src/dos/dos_programs.cpp  |  48 ++-
+ src/dos/drive_cache.cpp   |  33 +-
+ src/dos/drive_fat.cpp     |  24 +-
+ src/dos/drive_iso.cpp     |  18 +-
+ src/dos/drive_local.cpp   |  61 ++-
+ src/dos/drive_physfs.cpp  | 841 ++++++++++++++++++++++++++++++++++++++
+ src/dos/drive_virtual.cpp |  22 +-
+ src/dos/drives.cpp        |   2 +-
+ src/dos/drives.h          | 153 ++++---
+ src/shell/shell.cpp       |  31 +-
+ 13 files changed, 1136 insertions(+), 147 deletions(-)
+ create mode 100644 src/dos/drive_physfs.cpp
+
+diff --git a/configure.in b/configure.in
+index 016ea95f..18a2792f 100644
+--- a/configure.in
++++ b/configure.in
+@@ -446,6 +446,15 @@ int main(int argc,char * argv[]) {
+ };
+ ],AC_MSG_RESULT(yes);AC_DEFINE(C_SET_PRIORITY,1),AC_MSG_RESULT(no))
+ 
++dnl PhysFS support
++AH_TEMPLATE(C_HAVE_PHYSFS,[Define to 1 if you have physfs library])
++AC_CHECK_LIB(physfs, PHYSFS_init, have_PHYSFS_init=yes,,)
++if test x$have_PHYSFS_init = xyes ; then
++	AC_DEFINE(C_HAVE_PHYSFS,1)
++	LIBS="$LIBS -lphysfs -lz"
++else
++	AC_MSG_WARN([Can't find PHYSFS_init])
++fi
+ 
+ dnl Some target detection and actions for them
+ case "$host" in
+diff --git a/include/dos_system.h b/include/dos_system.h
+index 5edb0487..e23a26c8 100644
+--- a/include/dos_system.h
++++ b/include/dos_system.h
+@@ -121,18 +121,19 @@ private:
+ /* The following variable can be lowered to free up some memory.
+  * The negative side effect: The stored searches will be turned over faster.
+  * Should not have impact on systems with few directory entries. */
++class DOS_Drive;
+ #define MAX_OPENDIRS 2048
+ //Can be high as it's only storage (16 bit variable)
+ 
+ class DOS_Drive_Cache {
+ public:
+ 	DOS_Drive_Cache					(void);
+-	DOS_Drive_Cache					(const char* path);
++	DOS_Drive_Cache					(const char* path, DOS_Drive *drive);
+ 	~DOS_Drive_Cache				(void);
+ 
+ 	enum TDirSort { NOSORT, ALPHABETICAL, DIRALPHABETICAL, ALPHABETICALREV, DIRALPHABETICALREV };
+ 
+-	void		SetBaseDir			(const char* path);
++	void		SetBaseDir			(const char* path, DOS_Drive *drive);
+ 	void		SetDirSort			(TDirSort sort) { sortDirType = sort; };
+ 	bool		OpenDir				(const char* path, Bit16u& id);
+ 	bool		ReadDir				(Bit16u id, char* &result);
+@@ -193,6 +194,7 @@ private:
+ 
+ 	CFileInfo*	dirBase;
+ 	char		dirPath				[CROSS_LEN];
++	DOS_Drive*	drive;
+ 	char		basePath			[CROSS_LEN];
+ 	bool		dirFirstTime;
+ 	TDirSort	sortDirType;
+@@ -215,33 +217,38 @@ class DOS_Drive {
+ public:
+ 	DOS_Drive();
+ 	virtual ~DOS_Drive(){};
+-	virtual bool FileOpen(DOS_File * * file,char * name,Bit32u flags)=0;
+-	virtual bool FileCreate(DOS_File * * file,char * name,Bit16u attributes)=0;
+-	virtual bool FileUnlink(char * _name)=0;
+-	virtual bool RemoveDir(char * _dir)=0;
+-	virtual bool MakeDir(char * _dir)=0;
+-	virtual bool TestDir(char * _dir)=0;
+-	virtual bool FindFirst(char * _dir,DOS_DTA & dta,bool fcb_findfirst=false)=0;
++	virtual bool FileOpen(DOS_File * * file,const char * name,Bit32u flags)=0;
++	virtual bool FileCreate(DOS_File * * file,const char * name,Bit16u attributes)=0;
++	virtual bool FileUnlink(const char * _name)=0;
++	virtual bool RemoveDir(const char * _dir)=0;
++	virtual bool MakeDir(const char * _dir)=0;
++	virtual bool TestDir(const char * _dir)=0;
++	virtual bool FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst=false)=0;
+ 	virtual bool FindNext(DOS_DTA & dta)=0;
+-	virtual bool GetFileAttr(char * name,Bit16u * attr)=0;
+-	virtual bool Rename(char * oldname,char * newname)=0;
++	virtual bool GetFileAttr(const char * name,Bit16u * attr)=0;
++	virtual bool Rename(const char * oldname,const char * newname)=0;
+ 	virtual bool AllocationInfo(Bit16u * _bytes_sector,Bit8u * _sectors_cluster,Bit16u * _total_clusters,Bit16u * _free_clusters)=0;
+ 	virtual bool FileExists(const char* name)=0;
+ 	virtual bool FileStat(const char* name, FileStat_Block * const stat_block)=0;
+ 	virtual Bit8u GetMediaByte(void)=0;
+ 	virtual void SetDir(const char* path) { strcpy(curdir,path); };
+-	virtual void EmptyCache(void) { dirCache.EmptyCache(); };
+ 	virtual bool isRemote(void)=0;
+ 	virtual bool isRemovable(void)=0;
+ 	virtual Bits UnMount(void)=0;
+ 
+-	char * GetInfo(void);
++	/* these 4 may only be used by DOS_Drive_Cache because they have special calling conventions */
++	virtual void *opendir(const char *dir) {return NULL;};
++	virtual void closedir(void *handle) {};
++	virtual bool read_directory_first(void *handle, char* entry_name, bool& is_directory) { return false; };
++	virtual bool read_directory_next(void *handle, char* entry_name, bool& is_directory) { return false; };
++
++	virtual const char * GetInfo(void);
+ 	char curdir[DOS_PATHLENGTH];
+ 	char info[256];
+ 	/* Can be overridden for example in iso images */
+-	virtual char const * GetLabel(){return dirCache.GetLabel();};
+-
+-	DOS_Drive_Cache dirCache;
++	virtual char const * GetLabel() {return "NOLABEL";};
++	virtual void SetLabel(const char *label, bool iscdrom, bool updatable) {};
++	virtual void EmptyCache() {};
+ 
+ 	// disk cycling functionality (request resources)
+ 	virtual void Activate(void) {};
+diff --git a/src/dos/Makefile.am b/src/dos/Makefile.am
+index 3bdfbf51..2862bf3b 100644
+--- a/src/dos/Makefile.am
++++ b/src/dos/Makefile.am
+@@ -7,4 +7,4 @@ libdos_a_SOURCES = dos.cpp dos_devices.cpp dos_execute.cpp dos_files.cpp dos_ioc
+ 		   drives.cpp drives.h drive_virtual.cpp drive_local.cpp drive_cache.cpp drive_fat.cpp \
+ 		   drive_iso.cpp dev_con.h dos_mscdex.cpp dos_keyboard_layout.cpp \
+ 		   cdrom.h cdrom.cpp cdrom_ioctl_win32.cpp cdrom_aspi_win32.cpp cdrom_ioctl_linux.cpp cdrom_image.cpp \
+-		   cdrom_ioctl_os2.cpp
++		   cdrom_ioctl_os2.cpp drive_physfs.cpp
+diff --git a/src/dos/dos_programs.cpp b/src/dos/dos_programs.cpp
+index 5f237186..a98683d9 100644
+--- a/src/dos/dos_programs.cpp
++++ b/src/dos/dos_programs.cpp
+@@ -171,6 +171,7 @@ public:
+ 
+ 			if (!cmd->FindCommand(2,temp_line)) goto showusage;
+ 			if (!temp_line.size()) goto showusage;
++			bool is_physfs = temp_line.find(':',((temp_line[0]|0x20) >= 'a' && (temp_line[0]|0x20) <= 'z')?2:0) != std::string::npos;
+ 			struct stat test;
+ 			//Win32 : strip tailing backslashes
+ 			//os2: some special drive check
+@@ -179,7 +180,7 @@ public:
+ #if defined (WIN32) || defined(OS2)
+ 			/* Removing trailing backslash if not root dir so stat will succeed */
+ 			if(temp_line.size() > 3 && temp_line[temp_line.size()-1]=='\\') temp_line.erase(temp_line.size()-1,1);
+-			if (stat(temp_line.c_str(),&test)) {
++			if (!is_physfs && stat(temp_line.c_str(),&test)) {
+ #endif
+ #if defined(WIN32)
+ // Nothing to do here.
+@@ -203,7 +204,7 @@ public:
+ 			}
+ 			if (failed) {
+ #else
+-			if (stat(temp_line.c_str(),&test)) {
++			if (!is_physfs && stat(temp_line.c_str(),&test)) {
+ 				failed = true;
+ 				Cross::ResolveHomedir(temp_line);
+ 				//Try again after resolving ~
+@@ -215,7 +216,7 @@ public:
+ 				return;
+ 			}
+ 			/* Not a switch so a normal directory/file */
+-			if (!(test.st_mode & S_IFDIR)) {
++			if (!is_physfs && !(test.st_mode & S_IFDIR)) {
+ #ifdef OS2
+ 				HFILE cdrom_fd = 0;
+ 				ULONG ulAction = 0;
+@@ -224,13 +225,26 @@ public:
+ 					OPEN_FLAGS_DASD | OPEN_SHARE_DENYNONE | OPEN_ACCESS_READONLY, 0L);
+ 				DosClose(cdrom_fd);
+ 				if (rc != NO_ERROR && rc != ERROR_NOT_READY) {
+-				WriteOut(MSG_Get("PROGRAM_MOUNT_ERROR_2"),temp_line.c_str());
+-				return;
+-			}
++#if C_HAVE_PHYSFS
++					// Make it a physfs then...
++					is_physfs = true;
++					temp_line.insert(0, 1, ':');
++#else
++					WriteOut(MSG_Get("PROGRAM_MOUNT_ERROR_2"),temp_line.c_str());
++					return;
++#endif
++				}
++#else
++#if C_HAVE_PHYSFS
++				// Make it a physfs then...
++				is_physfs = true;
++				temp_line.insert(0, 1, ':');
+ #else
+ 				WriteOut(MSG_Get("PROGRAM_MOUNT_ERROR_2"),temp_line.c_str());
+ 				return;
+ #endif
++#endif
++
+ 			}
+ 
+ 			if (temp_line[temp_line.size()-1]!=CROSS_FILESPLIT) temp_line+=CROSS_FILESPLIT;
+@@ -267,7 +281,15 @@ public:
+ 					MSCDEX_SetCDInterface(CDROM_USE_IOCTL_DIO, num);
+ #endif
+ 				}
+-				newdrive  = new cdromDrive(drive,temp_line.c_str(),sizes[0],bit8size,sizes[2],0,mediaid,error);
++				if (is_physfs) {
++#if C_HAVE_PHYSFS
++					newdrive  = new physfscdromDrive(drive,temp_line.c_str(),sizes[0],bit8size,sizes[2],0,mediaid,error);
++#else
++					LOG_MSG("ERROR:This build does not support physfs");
++#endif
++				} else {
++					newdrive  = new cdromDrive(drive,temp_line.c_str(),sizes[0],bit8size,sizes[2],0,mediaid,error);
++				}
+ 				// Check Mscdex, if it worked out...
+ 				switch (error) {
+ 					case 0  :	WriteOut(MSG_Get("MSCDEX_SUCCESS"));				break;
+@@ -291,7 +313,15 @@ public:
+ #else
+ 				if(temp_line == "/") WriteOut(MSG_Get("PROGRAM_MOUNT_WARNING_OTHER"));
+ #endif
+-				newdrive=new localDrive(temp_line.c_str(),sizes[0],bit8size,sizes[2],sizes[3],mediaid);
++				if (is_physfs) {
++#if C_HAVE_PHYSFS
++					newdrive=new physfsDrive(temp_line.c_str(),sizes[0],bit8size,sizes[2],sizes[3],mediaid);
++#else
++					LOG_MSG("ERROR:This build does not support physfs");
++#endif
++				} else {
++					newdrive = new localDrive(temp_line.c_str(),sizes[0],bit8size,sizes[2],sizes[3],mediaid);
++				}
+ 			}
+ 		} else {
+ 			WriteOut(MSG_Get("PROGRAM_MOUNT_ILL_TYPE"),type.c_str());
+@@ -314,7 +344,7 @@ public:
+ 		 * This way every drive except cdroms should get a label.*/
+ 		else if(type == "dir") { 
+ 			label = drive; label += "_DRIVE";
+-			newdrive->dirCache.SetLabel(label.c_str(),iscdrom,true);
++			newdrive->dirCache.SetLabel(label.c_str(),iscdrom,false);
+ 		} else if(type == "floppy") {
+ 			label = drive; label += "_FLOPPY";
+ 			newdrive->dirCache.SetLabel(label.c_str(),iscdrom,true);
+diff --git a/src/dos/drive_cache.cpp b/src/dos/drive_cache.cpp
+index 5f155e5d..e67e7e46 100644
+--- a/src/dos/drive_cache.cpp
++++ b/src/dos/drive_cache.cpp
+@@ -72,7 +72,7 @@ DOS_Drive_Cache::DOS_Drive_Cache(void) {
+ 	updatelabel = true;
+ }
+ 
+-DOS_Drive_Cache::DOS_Drive_Cache(const char* path) {
++DOS_Drive_Cache::DOS_Drive_Cache(const char* path, DOS_Drive *drv) {
+ 	dirBase			= new CFileInfo;
+ 	save_dir		= 0;
+ 	srchNr			= 0;
+@@ -80,7 +80,7 @@ DOS_Drive_Cache::DOS_Drive_Cache(const char* path) {
+ 	nextFreeFindFirst	= 0;
+ 	for (Bit32u i=0; i<MAX_OPENDIRS; i++) { dirSearch[i] = 0; free[i] = true; dirFindFirst[i] = 0; };
+ 	SetDirSort(DIRALPHABETICAL);
+-	SetBaseDir(path);
++	SetBaseDir(path, drv);
+ 	updatelabel = true;
+ }
+ 
+@@ -102,7 +102,7 @@ void DOS_Drive_Cache::EmptyCache(void) {
+ 	save_dir	= 0;
+ 	srchNr		= 0;
+ 	for (Bit32u i=0; i<MAX_OPENDIRS; i++) free[i] = true; 
+-	SetBaseDir(basePath);
++	SetBaseDir(basePath, drive);
+ }
+ 
+ void DOS_Drive_Cache::SetLabel(const char* vname,bool cdrom,bool allowupdate) {
+@@ -122,9 +122,10 @@ Bit16u DOS_Drive_Cache::GetFreeID(CFileInfo* dir) {
+ 	return 0;
+ }
+ 
+-void DOS_Drive_Cache::SetBaseDir(const char* baseDir) {
++void DOS_Drive_Cache::SetBaseDir(const char* baseDir, DOS_Drive *drv) {
+ 	Bit16u id;
+ 	strcpy(basePath,baseDir);
++	drive = drv;
+ 	if (OpenDir(baseDir,id)) {
+ 		char* result = 0;
+ 		ReadDir(id,result);
+@@ -133,18 +134,18 @@ void DOS_Drive_Cache::SetBaseDir(const char* baseDir) {
+ #if defined (WIN32) || defined (OS2)
+ 	bool cdrom = false;
+ 	char labellocal[256]={ 0 };
+-	char drive[4] = "C:\\";
+-	drive[0] = basePath[0];
++	char drivePath[4] = "C:\\";
++	drivePath[0] = basePath[0];
+ #if defined (WIN32)
+-	if (GetVolumeInformation(drive,labellocal,256,NULL,NULL,NULL,NULL,0)) {
+-	UINT test = GetDriveType(drive);
++	if (GetVolumeInformation(drivePath,labellocal,256,NULL,NULL,NULL,NULL,0)) {
++	UINT test = GetDriveType(drivePath);
+ 	if(test == DRIVE_CDROM) cdrom = true;
+ #else // OS2
+ 	//TODO determine wether cdrom or not!
+ 	FSINFO fsinfo;
+-	ULONG drivenumber = drive[0];
++	ULONG drivenumber = drivePath[0];
+ 	if (drivenumber > 26) { // drive letter was lowercase
+-		drivenumber = drive[0] - 'a' + 1;
++		drivenumber = drivePath[0] - 'a' + 1;
+ 	}
+ 	APIRET rc = DosQueryFSInfo(drivenumber, FSIL_VOLSER, &fsinfo, sizeof(FSINFO));
+ 	if (rc == NO_ERROR) {
+@@ -593,10 +594,10 @@ bool DOS_Drive_Cache::OpenDir(CFileInfo* dir, const char* expand, Bit16u& id) {
+ 	// open dir
+ 	if (dirSearch[id]) {
+ 		// open dir
+-		dir_information* dirp = open_directory(expandcopy);
++		void* dirp = drive->opendir(expandcopy);
+ 		if (dirp) { 
+ 			// Reset it..
+-			close_directory(dirp);
++			if (dirp) drive->closedir(dirp);
+ 			strcpy(dirPath,expandcopy);
+ 			free[id] = false;
+ 			return true;
+@@ -657,7 +658,7 @@ bool DOS_Drive_Cache::ReadDir(Bit16u id, char* &result) {
+ 
+ 	if (!IsCachedIn(dirSearch[id])) {
+ 		// Try to open directory
+-		dir_information* dirp = open_directory(dirPath);
++		void* dirp = drive->opendir(dirPath);
+ 		if (!dirp) {
+ 			free[id] = true;
+ 			return false;
+@@ -665,15 +666,15 @@ bool DOS_Drive_Cache::ReadDir(Bit16u id, char* &result) {
+ 		// Read complete directory
+ 		char dir_name[CROSS_LEN];
+ 		bool is_directory;
+-		if (read_directory_first(dirp, dir_name, is_directory)) {
++		if (drive->read_directory_first(dirp, dir_name, is_directory)) {
+ 			CreateEntry(dirSearch[id], dir_name, is_directory);
+-			while (read_directory_next(dirp, dir_name, is_directory)) {
++			while (drive->read_directory_next(dirp, dir_name, is_directory)) {
+ 				CreateEntry(dirSearch[id], dir_name, is_directory);
+ 			}
+ 		}
+ 
+ 		// close dir
+-		close_directory(dirp);
++		drive->closedir(dirp);
+ 
+ 		// Info
+ /*		if (!dirp) {
+diff --git a/src/dos/drive_fat.cpp b/src/dos/drive_fat.cpp
+index 3fbe33b4..a1d6a10c 100644
+--- a/src/dos/drive_fat.cpp
++++ b/src/dos/drive_fat.cpp
+@@ -70,7 +70,7 @@ private:
+ 
+ /* IN - char * filename: Name in regular filename format, e.g. bob.txt */
+ /* OUT - char * filearray: Name in DOS directory format, eleven char, e.g. bob     txt */
+-static void convToDirFile(char *filename, char *filearray) {
++static void convToDirFile(const char *filename, char *filearray) {
+ 	Bit32u charidx = 0;
+ 	Bit32u flen,i;
+ 	flen = (Bit32u)strlen(filename);
+@@ -394,7 +394,7 @@ void fatDrive::setClusterValue(Bit32u clustNum, Bit32u clustValue) {
+ 	}
+ }
+ 
+-bool fatDrive::getEntryName(char *fullname, char *entname) {
++bool fatDrive::getEntryName(const char *fullname, char *entname) {
+ 	char dirtoken[DOS_PATHLENGTH];
+ 
+ 	char * findDir;
+@@ -462,7 +462,7 @@ bool fatDrive::getFileDirEntry(char const * const filename, direntry * useEntry,
+ 	return true;
+ }
+ 
+-bool fatDrive::getDirClustNum(char *dir, Bit32u *clustNum, bool parDir) {
++bool fatDrive::getDirClustNum(const char *dir, Bit32u *clustNum, bool parDir) {
+ 	Bit32u len = (Bit32u)strlen(dir);
+ 	char dirtoken[DOS_PATHLENGTH];
+ 	Bit32u currentClust = 0;
+@@ -770,7 +770,7 @@ Bits fatDrive::UnMount(void) {
+ 
+ Bit8u fatDrive::GetMediaByte(void) { return loadedDisk->GetBiosType(); }
+ 
+-bool fatDrive::FileCreate(DOS_File **file, char *name, Bit16u attributes) {
++bool fatDrive::FileCreate(DOS_File **file, const char *name, Bit16u attributes) {
+ 	direntry fileEntry;
+ 	Bit32u dirClust, subEntry;
+ 	char dirName[DOS_NAMELENGTH_ASCII];
+@@ -820,7 +820,7 @@ bool fatDrive::FileExists(const char *name) {
+ 	return true;
+ }
+ 
+-bool fatDrive::FileOpen(DOS_File **file, char *name, Bit32u flags) {
++bool fatDrive::FileOpen(DOS_File **file, const char *name, Bit32u flags) {
+ 	direntry fileEntry;
+ 	Bit32u dirClust, subEntry;
+ 	if(!getFileDirEntry(name, &fileEntry, &dirClust, &subEntry)) return false;
+@@ -840,7 +840,7 @@ bool fatDrive::FileStat(const char * /*name*/, FileStat_Block *const /*stat_bloc
+ 	return false;
+ }
+ 
+-bool fatDrive::FileUnlink(char * name) {
++bool fatDrive::FileUnlink(const char * name) {
+ 	direntry fileEntry;
+ 	Bit32u dirClust, subEntry;
+ 
+@@ -854,7 +854,7 @@ bool fatDrive::FileUnlink(char * name) {
+ 	return true;
+ }
+ 
+-bool fatDrive::FindFirst(char *_dir, DOS_DTA &dta,bool /*fcb_findfirst*/) {
++bool fatDrive::FindFirst(const char *_dir, DOS_DTA &dta,bool /*fcb_findfirst*/) {
+ 	direntry dummyClust;
+ 	Bit8u attr;char pattern[DOS_NAMELENGTH_ASCII];
+ 	dta.GetSearchParams(attr,pattern);
+@@ -966,7 +966,7 @@ bool fatDrive::FindNext(DOS_DTA &dta) {
+ 	return FindNextInternal(dta.GetDirIDCluster(), dta, &dummyClust);
+ }
+ 
+-bool fatDrive::GetFileAttr(char *name, Bit16u *attr) {
++bool fatDrive::GetFileAttr(const char *name, Bit16u *attr) {
+ 	direntry fileEntry;
+ 	Bit32u dirClust, subEntry;
+ 	if(!getFileDirEntry(name, &fileEntry, &dirClust, &subEntry)) {
+@@ -1120,7 +1120,7 @@ void fatDrive::zeroOutCluster(Bit32u clustNumber) {
+ 	}
+ }
+ 
+-bool fatDrive::MakeDir(char *dir) {
++bool fatDrive::MakeDir(const char *dir) {
+ 	Bit32u dummyClust, dirClust;
+ 	direntry tmpentry;
+ 	char dirName[DOS_NAMELENGTH_ASCII];
+@@ -1172,7 +1172,7 @@ bool fatDrive::MakeDir(char *dir) {
+ 	return true;
+ }
+ 
+-bool fatDrive::RemoveDir(char *dir) {
++bool fatDrive::RemoveDir(const char *dir) {
+ 	Bit32u dummyClust, dirClust;
+ 	direntry tmpentry;
+ 	char dirName[DOS_NAMELENGTH_ASCII];
+@@ -1225,7 +1225,7 @@ bool fatDrive::RemoveDir(char *dir) {
+ 	return true;
+ }
+ 
+-bool fatDrive::Rename(char * oldname, char * newname) {
++bool fatDrive::Rename(const char * oldname, const char * newname) {
+ 	direntry fileEntry1;
+ 	Bit32u dirClust1, subEntry1;
+ 	if(!getFileDirEntry(oldname, &fileEntry1, &dirClust1, &subEntry1)) return false;
+@@ -1264,7 +1264,7 @@ bool fatDrive::Rename(char * oldname, char * newname) {
+ 	return false;
+ }
+ 
+-bool fatDrive::TestDir(char *dir) {
++bool fatDrive::TestDir(const char *dir) {
+ 	Bit32u dummyClust;
+ 	return getDirClustNum(dir, &dummyClust, false);
+ }
+diff --git a/src/dos/drive_iso.cpp b/src/dos/drive_iso.cpp
+index 5150850b..cfe21006 100644
+--- a/src/dos/drive_iso.cpp
++++ b/src/dos/drive_iso.cpp
+@@ -192,7 +192,7 @@ void isoDrive::Activate(void) {
+ 	UpdateMscdex(driveLetter, fileName, subUnit);
+ }
+ 
+-bool isoDrive::FileOpen(DOS_File **file, char *name, Bit32u flags) {
++bool isoDrive::FileOpen(DOS_File **file, const char *name, Bit32u flags) {
+ 	if ((flags & 0x0f) == OPEN_WRITE) {
+ 		DOS_SetError(DOSERR_ACCESS_DENIED);
+ 		return false;
+@@ -213,32 +213,32 @@ bool isoDrive::FileOpen(DOS_File **file, char *name, Bit32u flags) {
+ 	return success;
+ }
+ 
+-bool isoDrive::FileCreate(DOS_File** /*file*/, char* /*name*/, Bit16u /*attributes*/) {
++bool isoDrive::FileCreate(DOS_File** /*file*/, const char* /*name*/, Bit16u /*attributes*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool isoDrive::FileUnlink(char* /*name*/) {
++bool isoDrive::FileUnlink(const char* /*name*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool isoDrive::RemoveDir(char* /*dir*/) {
++bool isoDrive::RemoveDir(const char* /*dir*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool isoDrive::MakeDir(char* /*dir*/) {
++bool isoDrive::MakeDir(const char* /*dir*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool isoDrive::TestDir(char *dir) {
++bool isoDrive::TestDir(const char *dir) {
+ 	isoDirEntry de;	
+ 	return (lookup(&de, dir) && IS_DIR(de.fileFlags));
+ }
+ 
+-bool isoDrive::FindFirst(char *dir, DOS_DTA &dta, bool fcb_findfirst) {
++bool isoDrive::FindFirst(const char *dir, DOS_DTA &dta, bool fcb_findfirst) {
+ 	isoDirEntry de;
+ 	if (!lookup(&de, dir)) {
+ 		DOS_SetError(DOSERR_PATH_NOT_FOUND);
+@@ -313,12 +313,12 @@ bool isoDrive::FindNext(DOS_DTA &dta) {
+ 	return false;
+ }
+ 
+-bool isoDrive::Rename(char* /*oldname*/, char* /*newname*/) {
++bool isoDrive::Rename(const char* /*oldname*/, const char* /*newname*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool isoDrive::GetFileAttr(char *name, Bit16u *attr) {
++bool isoDrive::GetFileAttr(const char *name, Bit16u *attr) {
+ 	*attr = 0;
+ 	isoDirEntry de;
+ 	bool success = lookup(&de, name);
+diff --git a/src/dos/drive_local.cpp b/src/dos/drive_local.cpp
+index f92e666f..cf8426b4 100644
+--- a/src/dos/drive_local.cpp
++++ b/src/dos/drive_local.cpp
+@@ -48,7 +48,7 @@ private:
+ };
+ 
+ 
+-bool localDrive::FileCreate(DOS_File * * file,char * name,Bit16u /*attributes*/) {
++bool localDrive::FileCreate(DOS_File * * file,const char * name,Bit16u /*attributes*/) {
+ //TODO Maybe care for attributes but not likely
+ 	char newname[CROSS_LEN];
+ 	strcpy(newname,basedir);
+@@ -71,7 +71,13 @@ bool localDrive::FileCreate(DOS_File * * file,char * name,Bit16u /*attributes*/)
+ 		return false;
+ 	}
+    
+-	if(!existing_file) dirCache.AddEntry(newname, true);
++	if(!existing_file) {
++		strcpy(newname,basedir);
++		strcat(newname,name);
++		CROSS_FILENAME(newname);
++		dirCache.AddEntry(newname, true);
++	}
++
+ 	/* Make the 16 bit device information */
+ 	*file=new localFile(name,hand);
+ 	(*file)->flags=OPEN_READWRITE;
+@@ -79,7 +85,7 @@ bool localDrive::FileCreate(DOS_File * * file,char * name,Bit16u /*attributes*/)
+ 	return true;
+ }
+ 
+-bool localDrive::FileOpen(DOS_File * * file,char * name,Bit32u flags) {
++bool localDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
+ 	const char* type;
+ 	switch (flags&0xf) {
+ 	case OPEN_READ:type="rb"; break;
+@@ -134,7 +140,7 @@ bool localDrive::GetSystemFilename(char *sysName, char const * const dosName) {
+ 	return true;
+ }
+ 
+-bool localDrive::FileUnlink(char * name) {
++bool localDrive::FileUnlink(const char * name) {
+ 	char newname[CROSS_LEN];
+ 	strcpy(newname,basedir);
+ 	strcat(newname,name);
+@@ -175,7 +181,7 @@ bool localDrive::FileUnlink(char * name) {
+ 	}
+ }
+ 
+-bool localDrive::FindFirst(char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
++bool localDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
+ 	char tempDir[CROSS_LEN];
+ 	strcpy(tempDir,basedir);
+ 	strcat(tempDir,_dir);
+@@ -284,7 +290,7 @@ again:
+ 	return true;
+ }
+ 
+-bool localDrive::GetFileAttr(char * name,Bit16u * attr) {
++bool localDrive::GetFileAttr(const char * name,Bit16u * attr) {
+ 	char newname[CROSS_LEN];
+ 	strcpy(newname,basedir);
+ 	strcat(newname,name);
+@@ -301,7 +307,7 @@ bool localDrive::GetFileAttr(char * name,Bit16u * attr) {
+ 	return false; 
+ }
+ 
+-bool localDrive::MakeDir(char * dir) {
++bool localDrive::MakeDir(const char * dir) {
+ 	char newdir[CROSS_LEN];
+ 	strcpy(newdir,basedir);
+ 	strcat(newdir,dir);
+@@ -316,7 +322,7 @@ bool localDrive::MakeDir(char * dir) {
+ 	return (temp==0);// || ((temp!=0) && (errno==EEXIST));
+ }
+ 
+-bool localDrive::RemoveDir(char * dir) {
++bool localDrive::RemoveDir(const char * dir) {
+ 	char newdir[CROSS_LEN];
+ 	strcpy(newdir,basedir);
+ 	strcat(newdir,dir);
+@@ -326,7 +332,7 @@ bool localDrive::RemoveDir(char * dir) {
+ 	return (temp==0);
+ }
+ 
+-bool localDrive::TestDir(char * dir) {
++bool localDrive::TestDir(const char * dir) {
+ 	char newdir[CROSS_LEN];
+ 	strcpy(newdir,basedir);
+ 	strcat(newdir,dir);
+@@ -344,7 +350,7 @@ bool localDrive::TestDir(char * dir) {
+ 	return (temp==0);
+ }
+ 
+-bool localDrive::Rename(char * oldname,char * newname) {
++bool localDrive::Rename(const char * oldname,const char * newname) {
+ 	char newold[CROSS_LEN];
+ 	strcpy(newold,basedir);
+ 	strcat(newold,oldname);
+@@ -421,6 +427,23 @@ Bits localDrive::UnMount(void) {
+ 	return 0; 
+ }
+ 
++/* helper functions for drive cache */
++void *localDrive::opendir(const char *name) {
++	return open_directory(name);
++}
++
++void localDrive::closedir(void *handle) {
++	close_directory((dir_information*)handle);
++}
++
++bool localDrive::read_directory_first(void *handle, char* entry_name, bool& is_directory) {
++	return ::read_directory_first((dir_information*)handle, entry_name, is_directory);
++}
++
++bool localDrive::read_directory_next(void *handle, char* entry_name, bool& is_directory) {
++	return ::read_directory_next((dir_information*)handle, entry_name, is_directory);
++}
++
+ localDrive::localDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid) {
+ 	strcpy(basedir,startdir);
+ 	sprintf(info,"local directory %s",startdir);
+@@ -430,7 +453,7 @@ localDrive::localDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors
+ 	allocation.free_clusters=_free_clusters;
+ 	allocation.mediaid=_mediaid;
+ 
+-	dirCache.SetBaseDir(basedir);
++	dirCache.SetBaseDir(basedir,this);
+ }
+ 
+ 
+@@ -564,7 +587,7 @@ cdromDrive::cdromDrive(const char driveLetter, const char * startdir,Bit16u _byt
+ 	if (MSCDEX_GetVolumeName(subUnit,name)) dirCache.SetLabel(name,true,true);
+ }
+ 
+-bool cdromDrive::FileOpen(DOS_File * * file,char * name,Bit32u flags) {
++bool cdromDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
+ 	if ((flags&0xf)==OPEN_READWRITE) {
+ 		flags &= ~OPEN_READWRITE;
+ 	} else if ((flags&0xf)==OPEN_WRITE) {
+@@ -576,38 +599,38 @@ bool cdromDrive::FileOpen(DOS_File * * file,char * name,Bit32u flags) {
+ 	return retcode;
+ }
+ 
+-bool cdromDrive::FileCreate(DOS_File * * /*file*/,char * /*name*/,Bit16u /*attributes*/) {
++bool cdromDrive::FileCreate(DOS_File * * /*file*/,const char * /*name*/,Bit16u /*attributes*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool cdromDrive::FileUnlink(char * /*name*/) {
++bool cdromDrive::FileUnlink(const char * /*name*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool cdromDrive::RemoveDir(char * /*dir*/) {
++bool cdromDrive::RemoveDir(const char * /*dir*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool cdromDrive::MakeDir(char * /*dir*/) {
++bool cdromDrive::MakeDir(const char * /*dir*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool cdromDrive::Rename(char * /*oldname*/,char * /*newname*/) {
++bool cdromDrive::Rename(const char * /*oldname*/,const char * /*newname*/) {
+ 	DOS_SetError(DOSERR_ACCESS_DENIED);
+ 	return false;
+ }
+ 
+-bool cdromDrive::GetFileAttr(char * name,Bit16u * attr) {
++bool cdromDrive::GetFileAttr(const char * name,Bit16u * attr) {
+ 	bool result = localDrive::GetFileAttr(name,attr);
+ 	if (result) *attr |= DOS_ATTR_READ_ONLY;
+ 	return result;
+ }
+ 
+-bool cdromDrive::FindFirst(char * _dir,DOS_DTA & dta,bool /*fcb_findfirst*/) {
++bool cdromDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool /*fcb_findfirst*/) {
+ 	// If media has changed, reInit drivecache.
+ 	if (MSCDEX_HasMediaChanged(subUnit)) {
+ 		dirCache.EmptyCache();
+diff --git a/src/dos/drive_physfs.cpp b/src/dos/drive_physfs.cpp
+new file mode 100644
+index 00000000..a082c0f0
+--- /dev/null
++++ b/src/dos/drive_physfs.cpp
+@@ -0,0 +1,841 @@
++/*
++ *  Copyright (C) 2002-2005  The DOSBox Team
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++
++/* $Id$ */
++
++#include "dosbox.h"
++
++#if C_HAVE_PHYSFS
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <time.h>
++#include <physfs.h>
++#include "dos_inc.h"
++#include "drives.h"
++#include "support.h"
++#include "cross.h"
++
++/* yuck. Hopefully, later physfs versions improve things */
++/* The hackishness level is quite low, but to get perfect, here is my personal wishlist for PHYSFS:
++ - mounting zip files at arbitrary locations (already in CVS, I think)
++ - rename support
++ - a better API for stat() infos
++ - more stdio-like API for seek, open and truncate
++ - perhaps a ramdisk as write dir?
++*/
++PHYSFS_sint64 PHYSFS_fileLength(const char *name) {
++	PHYSFS_file *f = PHYSFS_openRead(name);
++	if (f == NULL) return 0;
++	PHYSFS_sint64 size = PHYSFS_fileLength(f);
++	PHYSFS_close(f);
++	return size;
++}
++
++class physfsFile : public DOS_File {
++public:
++	physfsFile(const char* name, PHYSFS_file * handle,Bit16u devinfo, const char* physname, bool write);
++	bool Read(Bit8u * data,Bit16u * size);
++	bool Write(Bit8u * data,Bit16u * size);
++	bool Seek(Bit32u * pos,Bit32u type);
++	bool prepareRead();
++	bool prepareWrite();
++	bool Close();
++	Bit16u GetInformation(void);
++	bool UpdateDateTimeFromHost(void);
++private:
++	PHYSFS_file * fhandle;
++	enum { READ,WRITE } last_action;
++	Bit16u info;
++	char pname[CROSS_LEN];
++};
++
++/* Need to strip "/.." components and transform '\\' to '/' for physfs */
++static char *normalize(char * name, const char *basedir) {
++	int last = strlen(name)-1;
++	strreplace(name,'\\','/');
++	while (last >= 0 && name[last] == '/') name[last--] = 0;
++	if (last > 0 && name[last] == '.' && name[last-1] == '/') name[last-1] = 0;
++	if (last > 1 && name[last] == '.' && name[last-1] == '.' && name[last-2] == '/') {
++		name[last-2] = 0;
++		char *slash = strrchr(name,'/');
++		if (slash) *slash = 0;
++	}
++	if (strlen(basedir) > strlen(name)) { strcpy(name,basedir); strreplace(name,'\\','/'); }
++	last = strlen(name)-1;
++	while (last >= 0 && name[last] == '/') name[last--] = 0;
++	if (name[0] == 0) name[0] = '/';
++	//LOG_MSG("File access: %s",name);
++	return name;
++}
++
++bool physfsDrive::FileCreate(DOS_File * * file,const char * name,Bit16u attributes) {
++	char newname[CROSS_LEN];
++	strcpy(newname,basedir);
++	strcat(newname,name);
++	CROSS_FILENAME(newname);
++	dirCache.ExpandName(newname);
++	normalize(newname,basedir);
++
++	/* Test if file exists, don't add to dirCache then */
++	bool existing_file=PHYSFS_exists(newname);
++
++	char *slash = strrchr(newname,'/');
++	if (slash && slash != newname) {
++		char file[CROSS_LEN];
++		*slash = 0;
++		if (!PHYSFS_isDirectory(newname)) return false;
++		PHYSFS_mkdir(newname);
++		*slash = '/';
++	}
++
++	PHYSFS_file * hand=PHYSFS_openWrite(newname);
++	if (!hand){
++		LOG_MSG("Warning: file creation failed: %s (%s)",newname,PHYSFS_getLastError());
++		return false;
++	}
++
++	/* Make the 16 bit device information */
++	*file=new physfsFile(name,hand,0x202,newname,true);
++	(*file)->flags=OPEN_READWRITE;
++	if(!existing_file) {
++		strcpy(newname,basedir);
++		strcat(newname,name);
++		CROSS_FILENAME(newname);
++		dirCache.AddEntry(newname, true);
++	}
++	return true;
++}
++
++bool physfsDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
++	char newname[CROSS_LEN];
++	strcpy(newname,basedir);
++	strcat(newname,name);
++	CROSS_FILENAME(newname);
++	dirCache.ExpandName(newname);
++	normalize(newname,basedir);
++
++	PHYSFS_file * hand;
++
++	if (!PHYSFS_exists(newname)) return false;
++	if ((flags&0xf) == OPEN_READ) {
++		hand = PHYSFS_openRead(newname);
++	} else {
++
++		/* open for reading, deal with writing later */
++		hand = PHYSFS_openRead(newname);
++	}
++
++	if (!hand) {
++		if((flags&0xf) != OPEN_READ) {
++			PHYSFS_file *hmm = PHYSFS_openRead(newname);
++			if (hmm) {
++				PHYSFS_close(hmm);
++				LOG_MSG("Warning: file %s exists and failed to open in write mode.\nPlease mount a write directory (see docs).",newname);
++			}
++		}
++		return false;
++	}
++
++	*file=new physfsFile(name,hand,0x202,newname,false);
++	(*file)->flags=flags;  //for the inheritance flag and maybe check for others.
++	return true;
++}
++
++bool physfsDrive::FileUnlink(const char * name) {
++	char newname[CROSS_LEN];
++	strcpy(newname,basedir);
++	strcat(newname,name);
++	CROSS_FILENAME(newname);
++	dirCache.ExpandName(newname);
++	normalize(newname,basedir);
++	if (PHYSFS_delete(newname)) {
++		CROSS_FILENAME(newname);
++		dirCache.DeleteEntry(newname);
++		return true;
++	};
++	return false;
++}
++
++
++bool physfsDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
++
++	char tempDir[CROSS_LEN];
++	strcpy(tempDir,basedir);
++	strcat(tempDir,_dir);
++	CROSS_FILENAME(tempDir);
++
++	char end[2]={CROSS_FILESPLIT,0};
++	if (tempDir[strlen(tempDir)-1]!=CROSS_FILESPLIT) strcat(tempDir,end);
++
++	Bit16u id;
++	if (!dirCache.FindFirst(tempDir,id))
++	{
++		DOS_SetError(DOSERR_PATH_NOT_FOUND);
++		return false;
++	}
++	strcpy(srchInfo[id].srch_dir,tempDir);
++	dta.SetDirID(id);
++
++	Bit8u sAttr;
++	dta.GetSearchParams(sAttr,tempDir);
++
++	if (sAttr == DOS_ATTR_VOLUME) {
++		if ( strcmp(dirCache.GetLabel(), "") == 0 ) {
++			LOG(LOG_DOSMISC,LOG_ERROR)("DRIVELABEL REQUESTED: none present, returned  NOLABEL");
++			dta.SetResult("NO_LABEL",0,0,0,DOS_ATTR_VOLUME);
++			return true;
++		}
++		dta.SetResult(dirCache.GetLabel(),0,0,0,DOS_ATTR_VOLUME);
++		return true;
++	} else if ((sAttr & DOS_ATTR_VOLUME)  && (*_dir == 0) && !fcb_findfirst) {
++	//should check for a valid leading directory instead of 0
++	//exists==true if the volume label matches the searchmask and the path is valid
++		if ( strcmp(dirCache.GetLabel(), "") == 0 ) {
++			LOG(LOG_DOSMISC,LOG_ERROR)("DRIVELABEL REQUESTED: none present, returned  NOLABEL");
++			dta.SetResult("NO_LABEL",0,0,0,DOS_ATTR_VOLUME);
++			return true;
++		}
++		if (WildFileCmp(dirCache.GetLabel(),tempDir)) {
++			dta.SetResult(dirCache.GetLabel(),0,0,0,DOS_ATTR_VOLUME);
++			return true;
++		}
++	}
++	return FindNext(dta);
++}
++
++bool physfsDrive::FindNext(DOS_DTA & dta) {
++
++	char * dir_ent;
++	char full_name[CROSS_LEN];
++
++	Bit8u srch_attr;char srch_pattern[DOS_NAMELENGTH_ASCII];
++	Bit8u find_attr;
++
++	dta.GetSearchParams(srch_attr,srch_pattern);
++
++	Bitu id = dta.GetDirID();
++
++again:
++	if (!dirCache.FindNext(id,dir_ent)) {
++		DOS_SetError(DOSERR_NO_MORE_FILES);
++		return false;
++	}
++	if(!WildFileCmp(dir_ent,srch_pattern)) goto again;
++
++	char find_name[DOS_NAMELENGTH_ASCII];Bit16u find_date,find_time;Bit32u find_size;
++	if(strlen(dir_ent)<DOS_NAMELENGTH_ASCII){
++		strcpy(find_name,dir_ent);
++		upcase(find_name);
++	}
++
++	strcpy(full_name,srchInfo[id].srch_dir);
++	strcat(full_name,dir_ent);
++	dirCache.ExpandName(full_name);
++	normalize(full_name,basedir);
++
++	if (PHYSFS_isDirectory(full_name)) find_attr=DOS_ATTR_DIRECTORY|DOS_ATTR_ARCHIVE;
++	else find_attr=DOS_ATTR_ARCHIVE;
++	if (~srch_attr & find_attr & (DOS_ATTR_DIRECTORY | DOS_ATTR_HIDDEN | DOS_ATTR_SYSTEM)) goto again;
++
++	/*file is okay, setup everything to be copied in DTA Block */
++	find_size=(Bit32u)PHYSFS_fileLength(full_name);
++	time_t mytime = PHYSFS_getLastModTime(full_name);
++	struct tm *time;
++	if((time=localtime(&mytime))!=0){
++		find_date=DOS_PackDate((Bit16u)(time->tm_year+1900),(Bit16u)(time->tm_mon+1),(Bit16u)time->tm_mday);
++		find_time=DOS_PackTime((Bit16u)time->tm_hour,(Bit16u)time->tm_min,(Bit16u)time->tm_sec);
++	} else {
++		find_time=6;
++		find_date=4;
++	}
++	dta.SetResult(find_name,find_size,find_date,find_time,find_attr);
++	return true;
++}
++
++bool physfsDrive::GetFileAttr(const char * name,Bit16u * attr) {
++	char newname[CROSS_LEN];
++	strcpy(newname,basedir);
++	strcat(newname,name);
++	CROSS_FILENAME(newname);
++	dirCache.ExpandName(newname);
++	normalize(newname,basedir);
++	char *last = strrchr(newname,'/');
++	if (last == NULL) last = newname-1;
++
++	*attr = 0;
++	if (!PHYSFS_exists(newname)) return false;
++	*attr=DOS_ATTR_ARCHIVE;
++	if (PHYSFS_isDirectory(newname)) *attr|=DOS_ATTR_DIRECTORY;
++	return true;
++}
++
++bool physfsDrive::MakeDir(const char * dir) {
++	char newdir[CROSS_LEN];
++	strcpy(newdir,basedir);
++	strcat(newdir,dir);
++	CROSS_FILENAME(newdir);
++	dirCache.ExpandName(newdir);
++	normalize(newdir,basedir);
++	if (PHYSFS_mkdir(newdir)) {
++		CROSS_FILENAME(newdir);
++		dirCache.CacheOut(newdir,true);
++		return true;
++	}
++	return false;
++}
++
++bool physfsDrive::RemoveDir(const char * dir) {
++	char newdir[CROSS_LEN];
++	strcpy(newdir,basedir);
++	strcat(newdir,dir);
++	CROSS_FILENAME(newdir);
++	dirCache.ExpandName(newdir);
++	normalize(newdir,basedir);
++	if (PHYSFS_isDirectory(newdir) && PHYSFS_delete(newdir)) {
++		CROSS_FILENAME(newdir);
++		dirCache.DeleteEntry(newdir,true);
++		return true;
++	}
++	return false;
++}
++
++bool physfsDrive::TestDir(const char * dir) {
++	char newdir[CROSS_LEN];
++	strcpy(newdir,basedir);
++	strcat(newdir,dir);
++	CROSS_FILENAME(newdir);
++	dirCache.ExpandName(newdir);
++	normalize(newdir,basedir);
++	return (PHYSFS_isDirectory(newdir));
++}
++
++bool physfsDrive::Rename(const char * oldname,const char * newname) {
++	char newold[CROSS_LEN];
++	strcpy(newold,basedir);
++	strcat(newold,oldname);
++	CROSS_FILENAME(newold);
++	dirCache.ExpandName(newold);
++	normalize(newold,basedir);
++
++	char newnew[CROSS_LEN];
++	strcpy(newnew,basedir);
++	strcat(newnew,newname);
++	CROSS_FILENAME(newnew);
++	dirCache.ExpandName(newnew);
++	normalize(newnew,basedir);
++	/* yuck. physfs doesn't have "rename". */
++	LOG_MSG("PHYSFS TODO: rename not yet implemented (%s -> %s)",newold,newnew);
++	return false;
++
++}
++
++bool physfsDrive::AllocationInfo(Bit16u * _bytes_sector,Bit8u * _sectors_cluster,Bit16u * _total_clusters,Bit16u * _free_clusters) {
++	/* Always report 100 mb free should be enough */
++	/* Total size is always 1 gb */
++	*_bytes_sector=allocation.bytes_sector;
++	*_sectors_cluster=allocation.sectors_cluster;
++	*_total_clusters=allocation.total_clusters;
++	*_free_clusters=allocation.free_clusters;
++	return true;
++}
++
++bool physfsDrive::FileExists(const char* name) {
++	char newname[CROSS_LEN];
++	strcpy(newname,basedir);
++	strcat(newname,name);
++	CROSS_FILENAME(newname);
++	dirCache.ExpandName(newname);
++	normalize(newname,basedir);
++	return PHYSFS_exists(newname) && !PHYSFS_isDirectory(newname);
++}
++
++bool physfsDrive::FileStat(const char* name, FileStat_Block * const stat_block) {
++	char newname[CROSS_LEN];
++	strcpy(newname,basedir);
++	strcat(newname,name);
++	CROSS_FILENAME(newname);
++	dirCache.ExpandName(newname);
++	normalize(newname,basedir);
++	time_t mytime = PHYSFS_getLastModTime(newname);
++	/* Convert the stat to a FileStat */
++	struct tm *time;
++	if((time=localtime(&mytime))!=0) {
++		stat_block->time=DOS_PackTime((Bit16u)time->tm_hour,(Bit16u)time->tm_min,(Bit16u)time->tm_sec);
++		stat_block->date=DOS_PackDate((Bit16u)(time->tm_year+1900),(Bit16u)(time->tm_mon+1),(Bit16u)time->tm_mday);
++	} else {
++		stat_block->time=DOS_PackTime(0,0,0);
++		stat_block->date=DOS_PackDate(1980,1,1);
++	}
++	stat_block->size=(Bit32u)PHYSFS_fileLength(newname);
++	return true;
++}
++
++
++Bit8u physfsDrive::GetMediaByte(void) {
++	return allocation.mediaid;
++}
++
++bool physfsDrive::isRemote(void) {
++	return false;
++}
++
++bool physfsDrive::isRemovable(void) {
++	return false;
++}
++
++struct opendirinfo {
++	char **files;
++	int pos;
++};
++/* helper functions for drive cache */
++bool physfsDrive::isdir(const char *name) {
++	char myname[CROSS_LEN];
++	strcpy(myname,name);
++	normalize(myname,basedir);
++	return PHYSFS_isDirectory(myname);
++}
++
++void *physfsDrive::opendir(const char *name) {
++	char myname[CROSS_LEN];
++	strcpy(myname,name);
++	normalize(myname,basedir);
++	if (!PHYSFS_isDirectory(myname)) return false;
++
++	struct opendirinfo *oinfo = (struct opendirinfo *)malloc(sizeof(struct opendirinfo));
++	oinfo->files = PHYSFS_enumerateFiles(myname);
++	if (oinfo->files == NULL) {
++		LOG_MSG("PHYSFS: nothing found for %s (%s)",myname,PHYSFS_getLastError());
++		free(oinfo);
++		return NULL;
++	}
++
++	oinfo->pos = (myname[1] == 0?0:-2);
++	return (void *)oinfo;
++}
++
++void physfsDrive::closedir(void *handle) {
++	struct opendirinfo *oinfo = (struct opendirinfo *)handle;
++	if (handle == NULL) return;
++	if (oinfo->files != NULL) PHYSFS_freeList(oinfo->files);
++	free(oinfo);
++}
++
++bool physfsDrive::read_directory_first(void* dirp, char* entry_name, bool& is_directory) {
++	return read_directory_next(dirp, entry_name, is_directory);
++}
++
++bool physfsDrive::read_directory_next(void* dirp, char* entry_name, bool& is_directory) {
++	struct opendirinfo *oinfo = (struct opendirinfo *)dirp;
++	if (!oinfo) return false;
++	if (oinfo->pos == -2) {
++		oinfo->pos++;
++		safe_strncpy(entry_name,".",CROSS_LEN);
++		is_directory = true;
++		return true;
++	}
++	if (oinfo->pos == -1) {
++		oinfo->pos++;
++		safe_strncpy(entry_name,"..",CROSS_LEN);
++		is_directory = true;
++		return true;
++	}
++	if (!oinfo->files || !oinfo->files[oinfo->pos]) return false;
++	safe_strncpy(entry_name,oinfo->files[oinfo->pos++],CROSS_LEN);
++	is_directory = isdir(entry_name);
++	return true;
++}
++
++extern std::string capturedir;
++static Bit8u physfs_used = 0;
++physfsDrive::physfsDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid)
++		   :localDrive(startdir,_bytes_sector,_sectors_cluster,_total_clusters,_free_clusters,_mediaid) {
++
++	char newname[CROSS_LEN+1];
++
++	/* No writedir given, use capture directory */
++	if(startdir[0] == ':') {
++		strcpy(newname,capturedir.c_str());
++		strcat(newname,startdir);
++	} else {
++		strcpy(newname,startdir);
++	}
++
++	CROSS_FILENAME(newname);
++	if (!physfs_used) {
++		PHYSFS_init("");
++		PHYSFS_permitSymbolicLinks(1);
++	}
++
++	physfs_used++;
++	char *lastdir = newname;
++	char *dir = strchr(lastdir+(((lastdir[0]|0x20) >= 'a' && (lastdir[0]|0x20) <= 'z')?2:0),':');
++	while (dir) {
++		*dir++ = 0;
++		if((lastdir == newname) && !strchr(dir+(((dir[0]|0x20) >= 'a' && (dir[0]|0x20) <= 'z')?2:0),':')) {
++			// If the first parameter is a directory, the next one has to be the archive file,
++			// do not confuse it with basedir if trailing : is not there!
++			int tmp = strlen(dir)-1;
++			dir[tmp++] = ':';
++			dir[tmp++] = CROSS_FILESPLIT;
++			dir[tmp] = '\0';
++		}
++		if (*lastdir && PHYSFS_addToSearchPath(lastdir,true) == 0) {
++			LOG_MSG("PHYSFS couldn't add '%s': %s",lastdir,PHYSFS_getLastError());
++		}
++		lastdir = dir;
++		dir = strchr(lastdir+(((lastdir[0]|0x20) >= 'a' && (lastdir[0]|0x20) <= 'z')?2:0),':');
++	}
++	const char *oldwrite = PHYSFS_getWriteDir();
++	if (oldwrite) oldwrite = strdup(oldwrite);
++	if (!PHYSFS_setWriteDir(newname)) {
++		if (!oldwrite)
++			LOG_MSG("PHYSFS can't use '%s' for writing, you might encounter problems",newname);
++		else
++			PHYSFS_setWriteDir(oldwrite);
++	}
++	if (oldwrite) free((char *)oldwrite);
++
++	strcpy(basedir,lastdir);
++
++	allocation.bytes_sector=_bytes_sector;
++	allocation.sectors_cluster=_sectors_cluster;
++	allocation.total_clusters=_total_clusters;
++	allocation.free_clusters=_free_clusters;
++	allocation.mediaid=_mediaid;
++
++	dirCache.SetBaseDir(basedir, this);
++}
++
++physfsDrive::~physfsDrive(void) {
++	if(!physfs_used) {
++		LOG_MSG("PHYSFS invalid reference count!");
++		return;
++	}
++	physfs_used--;
++	if(!physfs_used) {
++		LOG_MSG("PHYSFS calling PHYSFS_deinit()");
++		PHYSFS_deinit();
++	}
++}
++
++const char *physfsDrive::GetInfo() {
++	char **files = PHYSFS_getSearchPath(), **list = files;
++	sprintf(info,"PHYSFS directory %s in ",basedir);
++	while (*files != NULL) {
++		strcat(info,*files++);
++		strcat(info,", ");
++	}
++	if (PHYSFS_getWriteDir() != NULL) {
++		strcat(info,"writing to ");
++		strcat(info,PHYSFS_getWriteDir());
++	} else {
++		strcat(info,"read-only");
++	}
++	PHYSFS_freeList(list);
++	return info;
++}
++
++
++bool physfsFile::Read(Bit8u * data,Bit16u * size) {
++	if ((this->flags & 0xf) == OPEN_WRITE) {        // check if file opened in write-only mode
++		DOS_SetError(DOSERR_ACCESS_DENIED);
++		return false;
++	}
++	if (last_action==WRITE) prepareRead();
++	last_action=READ;
++	PHYSFS_sint64 mysize = PHYSFS_read(fhandle,data,1,(PHYSFS_uint64)*size);
++	//LOG_MSG("Read %i bytes (wanted %i) at %i of %s (%s)",(int)mysize,(int)*size,(int)PHYSFS_tell(fhandle),name,PHYSFS_getLastError());
++	*size = (Bit16u)mysize;
++	return true;
++}
++
++bool physfsFile::Write(Bit8u * data,Bit16u * size) {
++	if ((this->flags & 0xf) == OPEN_READ) { // check if file opened in read-only mode
++		DOS_SetError(DOSERR_ACCESS_DENIED);
++		return false;
++	}
++	if (last_action==READ) prepareWrite();
++	last_action=WRITE;
++	if (*size==0) {
++		if (PHYSFS_tell(fhandle) == 0) {
++			PHYSFS_close(PHYSFS_openWrite(pname));
++			//LOG_MSG("Truncate %s (%s)",name,PHYSFS_getLastError());
++		} else {
++			LOG_MSG("PHYSFS TODO: truncate not yet implemented (%s at %i)",pname,PHYSFS_tell(fhandle));
++			return false;
++		}
++	} else {
++		PHYSFS_sint64 mysize = PHYSFS_write(fhandle,data,1,(PHYSFS_uint64)*size);
++		//LOG_MSG("Wrote %i bytes (wanted %i) at %i of %s (%s)",(int)mysize,(int)*size,(int)PHYSFS_tell(fhandle),name,PHYSFS_getLastError());
++		*size = (Bit16u)mysize;
++		return true;
++	}
++}
++bool physfsFile::Seek(Bit32u * pos,Bit32u type) {
++	PHYSFS_sint64 mypos = (Bit32s)*pos;
++	switch (type) {
++	case DOS_SEEK_SET:break;
++	case DOS_SEEK_CUR:mypos += PHYSFS_tell(fhandle); break;
++	case DOS_SEEK_END:mypos += PHYSFS_fileLength(fhandle);-mypos; break;
++	default:
++	//TODO Give some doserrorcode;
++		return false;//ERROR
++	}
++
++	if (!PHYSFS_seek(fhandle,mypos)) {
++		// Out of file range, pretend everythings ok
++		// and move file pointer top end of file... ?! (Black Thorne)
++		PHYSFS_seek(fhandle,PHYSFS_fileLength(fhandle));
++	};
++	//LOG_MSG("Seek to %i (%i at %x) of %s (%s)",(int)mypos,(int)*pos,type,name,PHYSFS_getLastError());
++
++	*pos=(Bit32u)PHYSFS_tell(fhandle);
++	return true;
++}
++
++bool physfsFile::prepareRead() {
++	PHYSFS_uint64 pos = PHYSFS_tell(fhandle);
++	PHYSFS_close(fhandle);
++	fhandle = PHYSFS_openRead(pname);
++	PHYSFS_seek(fhandle, pos);
++	//LOG_MSG("Goto read (%s at %i)",pname,PHYSFS_tell(fhandle));
++}
++
++#ifndef WIN32
++#include <fcntl.h>
++#include <errno.h>
++#endif
++
++bool physfsFile::prepareWrite() {
++	const char *wdir = PHYSFS_getWriteDir();
++	if (wdir == NULL) {
++		LOG_MSG("PHYSFS could not fulfill write request: no write directory set.");
++		return false;
++	}
++	//LOG_MSG("Goto write (%s at %i)",pname,PHYSFS_tell(fhandle));
++	const char *fdir = PHYSFS_getRealDir(pname);
++	PHYSFS_uint64 pos = PHYSFS_tell(fhandle);
++	char *slash = strrchr(pname,'/');
++	if (slash && slash != pname) {
++		*slash = 0;
++		PHYSFS_mkdir(pname);
++		*slash = '/';
++	}
++	if (strcmp(fdir,wdir)) { /* we need COW */
++		//LOG_MSG("COW",pname,PHYSFS_tell(fhandle));
++		PHYSFS_file *whandle = PHYSFS_openWrite(pname);
++		if (whandle == NULL) {
++			LOG_MSG("PHYSFS copy-on-write failed: %s.",PHYSFS_getLastError());
++			return false;
++		}
++		char buffer[65536];
++		PHYSFS_sint64 size;
++		PHYSFS_seek(fhandle, 0);
++		while ((size = PHYSFS_read(fhandle,buffer,1,65536)) > 0) {
++			if (PHYSFS_write(whandle,buffer,1,size) != size) {
++				LOG_MSG("PHYSFS copy-on-write failed: %s.",PHYSFS_getLastError());
++				PHYSFS_close(whandle);
++				return false;
++			}
++		}
++		PHYSFS_seek(whandle, pos);
++		PHYSFS_close(fhandle);
++		fhandle = whandle;
++	} else { // megayuck - physfs on posix platforms uses O_APPEND. We illegally access the fd directly and clear that flag.
++		//LOG_MSG("noCOW",pname,PHYSFS_tell(fhandle));
++		PHYSFS_close(fhandle);
++		fhandle = PHYSFS_openAppend(pname);
++#ifndef WIN32
++		int rc = fcntl(**(int**)fhandle->opaque,F_SETFL,0);
++#endif
++		PHYSFS_seek(fhandle, pos);
++	}
++	return true;
++}
++
++bool physfsFile::Close() {
++	// only close if one reference left
++	if (refCtr==1) {
++		PHYSFS_close(fhandle);
++		fhandle = 0;
++		open = false;
++	};
++	return true;
++}
++
++Bit16u physfsFile::GetInformation(void) {
++	return info;
++}
++
++
++physfsFile::physfsFile(const char* _name, PHYSFS_file * handle,Bit16u devinfo, const char* physname, bool write) {
++	fhandle=handle;
++	info=devinfo;
++	strcpy(pname,physname);
++	time_t mytime = PHYSFS_getLastModTime(pname);
++	/* Convert the stat to a FileStat */
++	struct tm *time;
++	if((time=localtime(&mytime))!=0) {
++		this->time=DOS_PackTime((Bit16u)time->tm_hour,(Bit16u)time->tm_min,(Bit16u)time->tm_sec);
++		this->date=DOS_PackDate((Bit16u)(time->tm_year+1900),(Bit16u)(time->tm_mon+1),(Bit16u)time->tm_mday);
++	} else {
++		this->time=DOS_PackTime(0,0,0);
++		this->date=DOS_PackDate(1980,1,1);
++	}
++
++	attr=DOS_ATTR_ARCHIVE;
++	last_action=(write?WRITE:READ);
++
++	open=true;
++	name=0;
++	SetName(_name);
++}
++
++bool physfsFile::UpdateDateTimeFromHost(void) {
++	if(!open) return false;
++	time_t mytime = PHYSFS_getLastModTime(pname);
++	/* Convert the stat to a FileStat */
++	struct tm *time;
++	if((time=localtime(&mytime))!=0) {
++		this->time=DOS_PackTime((Bit16u)time->tm_hour,(Bit16u)time->tm_min,(Bit16u)time->tm_sec);
++		this->date=DOS_PackDate((Bit16u)(time->tm_year+1900),(Bit16u)(time->tm_mon+1),(Bit16u)time->tm_mday);
++	} else {
++		this->time=DOS_PackTime(0,0,0);
++		this->date=DOS_PackDate(1980,1,1);
++	}
++	return true;
++}
++
++
++// ********************************************
++// CDROM DRIVE
++// ********************************************
++
++int  MSCDEX_AddDrive(char driveLetter, const char* physicalPath, Bit8u& subUnit);
++bool MSCDEX_HasMediaChanged(Bit8u subUnit);
++bool MSCDEX_GetVolumeName(Bit8u subUnit, char* name);
++
++
++physfscdromDrive::physfscdromDrive(const char driveLetter, const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid, int& error)
++		   :physfsDrive(startdir,_bytes_sector,_sectors_cluster,_total_clusters,_free_clusters,_mediaid)
++{
++	// Init mscdex
++	error = MSCDEX_AddDrive(driveLetter,startdir,subUnit);
++	// Get Volume Label
++	char name[32];
++	if (MSCDEX_GetVolumeName(subUnit,name)) dirCache.SetLabel(name,true,true);
++};
++
++const char *physfscdromDrive::GetInfo() {
++	char **files = PHYSFS_getSearchPath(), **list = files;
++	sprintf(info,"PHYSFS directory %s in ",basedir);
++	while (*files != NULL) {
++		strcat(info,*files++);
++		strcat(info,", ");
++	}
++	strcat(info,"CD-ROM mode (read-only)");
++	PHYSFS_freeList(list);
++	return info;
++}
++
++bool physfscdromDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags)
++{
++	if ((flags&0xf)==OPEN_READWRITE) {
++		flags &= ~OPEN_READWRITE;
++	} else if ((flags&0xf)==OPEN_WRITE) {
++		DOS_SetError(DOSERR_ACCESS_DENIED);
++		return false;
++	}
++	return physfsDrive::FileOpen(file,name,flags);
++};
++
++bool physfscdromDrive::FileCreate(DOS_File * * file,const char * name,Bit16u attributes)
++{
++	DOS_SetError(DOSERR_ACCESS_DENIED);
++	return false;
++};
++
++bool physfscdromDrive::FileUnlink(const char * name)
++{
++	DOS_SetError(DOSERR_ACCESS_DENIED);
++	return false;
++};
++
++bool physfscdromDrive::RemoveDir(const char * dir)
++{
++	DOS_SetError(DOSERR_ACCESS_DENIED);
++	return false;
++};
++
++bool physfscdromDrive::MakeDir(const char * dir)
++{
++	DOS_SetError(DOSERR_ACCESS_DENIED);
++	return false;
++};
++
++bool physfscdromDrive::Rename(const char * oldname,const char * newname)
++{
++	DOS_SetError(DOSERR_ACCESS_DENIED);
++	return false;
++};
++
++bool physfscdromDrive::GetFileAttr(const char * name,Bit16u * attr)
++{
++	bool result = physfsDrive::GetFileAttr(name,attr);
++	if (result) *attr |= DOS_ATTR_READ_ONLY;
++	return result;
++};
++
++bool physfscdromDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst)
++{
++	// If media has changed, reInit drivecache.
++	if (MSCDEX_HasMediaChanged(subUnit)) {
++		dirCache.EmptyCache();
++		// Get Volume Label
++		char name[32];
++		if (MSCDEX_GetVolumeName(subUnit,name)) dirCache.SetLabel(name,true,true);
++	}
++	return physfsDrive::FindFirst(_dir,dta);
++};
++
++void physfscdromDrive::SetDir(const char* path)
++{
++	// If media has changed, reInit drivecache.
++	if (MSCDEX_HasMediaChanged(subUnit)) {
++		dirCache.EmptyCache();
++		// Get Volume Label
++		char name[32];
++		if (MSCDEX_GetVolumeName(subUnit,name)) dirCache.SetLabel(name,true,true);
++	}
++	physfsDrive::SetDir(path);
++};
++
++bool physfscdromDrive::isRemote(void) {
++	return true;
++}
++
++bool physfscdromDrive::isRemovable(void) {
++	return true;
++}
++
++Bits physfscdromDrive::UnMount(void) {
++	return true;
++}
++
++#endif // C_HAVE_PHYSFS
+diff --git a/src/dos/drive_virtual.cpp b/src/dos/drive_virtual.cpp
+index 95bdf187..d3a584d8 100644
+--- a/src/dos/drive_virtual.cpp
++++ b/src/dos/drive_virtual.cpp
+@@ -140,7 +140,7 @@ Virtual_Drive::Virtual_Drive() {
+ }
+ 
+ 
+-bool Virtual_Drive::FileOpen(DOS_File * * file,char * name,Bit32u flags) {
++bool Virtual_Drive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
+ /* Scan through the internal list of files */
+ 	VFILE_Block * cur_file=first_file;
+ 	while (cur_file) {
+@@ -155,23 +155,23 @@ bool Virtual_Drive::FileOpen(DOS_File * * file,char * name,Bit32u flags) {
+ 	return false;
+ }
+ 
+-bool Virtual_Drive::FileCreate(DOS_File * * file,char * name,Bit16u attributes) {
++bool Virtual_Drive::FileCreate(DOS_File * * /*file*/,const char * /*name*/,Bit16u /*attributes*/) {
+ 	return false;
+ }
+ 
+-bool Virtual_Drive::FileUnlink(char * name) {
++bool Virtual_Drive::FileUnlink(const char * /*name*/) {
+ 	return false;
+ }
+ 
+-bool Virtual_Drive::RemoveDir(char * dir) {
++bool Virtual_Drive::RemoveDir(const char * /*dir*/) {
+ 	return false;
+ }
+ 
+-bool Virtual_Drive::MakeDir(char * dir) {
++bool Virtual_Drive::MakeDir(const char * /*dir*/) {
+ 	return false;
+ }
+ 
+-bool Virtual_Drive::TestDir(char * dir) {
++bool Virtual_Drive::TestDir(const char * dir) {
+ 	if (!dir[0]) return true;		//only valid dir is the empty dir
+ 	return false;
+ }
+@@ -200,8 +200,8 @@ bool Virtual_Drive::FileExists(const char* name){
+ 	return false;
+ }
+ 
+-bool Virtual_Drive::FindFirst(char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
+-	search_file=first_file;
++bool Virtual_Drive::FindFirst(const char * /*_dir*/,DOS_DTA & dta,bool fcb_findfirst) {
++	search_file = first_file;
+ 	Bit8u attr;char pattern[DOS_NAMELENGTH_ASCII];
+ 	dta.GetSearchParams(attr,pattern);
+ 	if (attr == DOS_ATTR_VOLUME) {
+@@ -231,8 +231,8 @@ bool Virtual_Drive::FindNext(DOS_DTA & dta) {
+ 	return false;
+ }
+ 
+-bool Virtual_Drive::GetFileAttr(char * name,Bit16u * attr) {
+-	VFILE_Block * cur_file=first_file;
++bool Virtual_Drive::GetFileAttr(const char * name,Bit16u * attr) {
++	VFILE_Block * cur_file = first_file;
+ 	while (cur_file) {
+ 		if (strcasecmp(name,cur_file->name)==0) { 
+ 			*attr = DOS_ATTR_ARCHIVE;	//Maybe readonly ?
+@@ -243,7 +243,7 @@ bool Virtual_Drive::GetFileAttr(char * name,Bit16u * attr) {
+ 	return false;
+ }
+ 
+-bool Virtual_Drive::Rename(char * oldname,char * newname) {
++bool Virtual_Drive::Rename(const char * /*oldname*/,const char * /*newname*/) {
+ 	return false;
+ }
+ 
+diff --git a/src/dos/drives.cpp b/src/dos/drives.cpp
+index c5b502d6..1ff73e08 100644
+--- a/src/dos/drives.cpp
++++ b/src/dos/drives.cpp
+@@ -114,7 +114,7 @@ DOS_Drive::DOS_Drive() {
+ 	info[0]=0;
+ }
+ 
+-char * DOS_Drive::GetInfo(void) {
++const char * DOS_Drive::GetInfo(void) {
+ 	return info;
+ }
+ 
+diff --git a/src/dos/drives.h b/src/dos/drives.h
+index aa629fc5..bcef9a22 100644
+--- a/src/dos/drives.h
++++ b/src/dos/drives.h
+@@ -52,18 +52,18 @@ private:
+ class localDrive : public DOS_Drive {
+ public:
+ 	localDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid);
+-	virtual bool FileOpen(DOS_File * * file,char * name,Bit32u flags);
++	virtual bool FileOpen(DOS_File * * file,const char * name,Bit32u flags);
+ 	virtual FILE *GetSystemFilePtr(char const * const name, char const * const type);
+ 	virtual bool GetSystemFilename(char* sysName, char const * const dosName);
+-	virtual bool FileCreate(DOS_File * * file,char * name,Bit16u attributes);
+-	virtual bool FileUnlink(char * name);
+-	virtual bool RemoveDir(char * dir);
+-	virtual bool MakeDir(char * dir);
+-	virtual bool TestDir(char * dir);
+-	virtual bool FindFirst(char * _dir,DOS_DTA & dta,bool fcb_findfirst=false);
++	virtual bool FileCreate(DOS_File * * file,const char * name,Bit16u attributes);
++	virtual bool FileUnlink(const char * name);
++	virtual bool RemoveDir(const char * dir);
++	virtual bool MakeDir(const char * dir);
++	virtual bool TestDir(const char * dir);
++	virtual bool FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst=false);
+ 	virtual bool FindNext(DOS_DTA & dta);
+-	virtual bool GetFileAttr(char * name,Bit16u * attr);
+-	virtual bool Rename(char * oldname,char * newname);
++	virtual bool GetFileAttr(const char * name,Bit16u * attr);
++	virtual bool Rename(const char * oldname,const char * newname);
+ 	virtual bool AllocationInfo(Bit16u * _bytes_sector,Bit8u * _sectors_cluster,Bit16u * _total_clusters,Bit16u * _free_clusters);
+ 	virtual bool FileExists(const char* name);
+ 	virtual bool FileStat(const char* name, FileStat_Block * const stat_block);
+@@ -71,7 +71,16 @@ public:
+ 	virtual bool isRemote(void);
+ 	virtual bool isRemovable(void);
+ 	virtual Bits UnMount(void);
++	// const char* getBasedir() {return basedir;};
++	virtual char const * GetLabel(){return dirCache.GetLabel();};
++	virtual void SetLabel(const char *label, bool iscdrom, bool updatable) { dirCache.SetLabel(label,iscdrom,updatable); };
++	virtual void *opendir(const char *dir);
++	virtual void closedir(void *handle);
++	virtual bool read_directory_first(void *handle, char* entry_name, bool& is_directory);
++	virtual bool read_directory_next(void *handle, char* entry_name, bool& is_directory);
++	virtual void EmptyCache(void) { dirCache.EmptyCache(); };
+ private:
++	DOS_Drive_Cache dirCache;
+ 	char basedir[CROSS_LEN];
+ 	friend void DOS_Shell::CMD_SUBST(char* args); 	
+ 	struct {
+@@ -87,6 +96,36 @@ private:
+ 	} allocation;
+ };
+ 
++class physfsDrive : public localDrive {
++private:
++	bool isdir(const char *dir);
++
++public:
++	physfsDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid);
++	virtual bool FileOpen(DOS_File * * file,const char * name,Bit32u flags);
++	virtual bool FileCreate(DOS_File * * file,const char * name,Bit16u attributes);
++	virtual bool FileUnlink(const char * name);
++	virtual bool RemoveDir(const char * dir);
++	virtual bool MakeDir(const char * dir);
++	virtual bool TestDir(const char * dir);
++	virtual bool FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst=false);
++	virtual bool FindNext(DOS_DTA & dta);
++	virtual bool GetFileAttr(const char * name,Bit16u * attr);
++	virtual bool Rename(const char * oldname,const char * newname);
++	virtual bool AllocationInfo(Bit16u * _bytes_sector,Bit8u * _sectors_cluster,Bit16u * _total_clusters,Bit16u * _free_clusters);
++	virtual bool FileExists(const char* name);
++	virtual bool FileStat(const char* name, FileStat_Block * const stat_block);
++	virtual Bit8u GetMediaByte(void);
++	virtual bool isRemote(void);
++	virtual bool isRemovable(void);
++	virtual void *opendir(const char *dir);
++	virtual void closedir(void *handle);
++	virtual bool read_directory_first(void *handle, char* entry_name, bool& is_directory);
++	virtual bool read_directory_next(void *handle, char* entry_name, bool& is_directory);
++	virtual const char *GetInfo(void);
++	virtual ~physfsDrive(void);
++};
++
+ #ifdef _MSC_VER
+ #pragma pack (1)
+ #endif
+@@ -147,16 +186,16 @@ struct partTable {
+ class fatDrive : public DOS_Drive {
+ public:
+ 	fatDrive(const char * sysFilename, Bit32u bytesector, Bit32u cylsector, Bit32u headscyl, Bit32u cylinders, Bit32u startSector);
+-	virtual bool FileOpen(DOS_File * * file,char * name,Bit32u flags);
+-	virtual bool FileCreate(DOS_File * * file,char * name,Bit16u attributes);
+-	virtual bool FileUnlink(char * name);
+-	virtual bool RemoveDir(char * dir);
+-	virtual bool MakeDir(char * dir);
+-	virtual bool TestDir(char * dir);
+-	virtual bool FindFirst(char * _dir,DOS_DTA & dta,bool fcb_findfirst=false);
++	virtual bool FileOpen(DOS_File * * file,const char * name,Bit32u flags);
++	virtual bool FileCreate(DOS_File * * file,const char * name,Bit16u attributes);
++	virtual bool FileUnlink(const char * name);
++	virtual bool RemoveDir(const char * dir);
++	virtual bool MakeDir(const char * dir);
++	virtual bool TestDir(const char * dir);
++	virtual bool FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst=false);
+ 	virtual bool FindNext(DOS_DTA & dta);
+-	virtual bool GetFileAttr(char * name,Bit16u * attr);
+-	virtual bool Rename(char * oldname,char * newname);
++	virtual bool GetFileAttr(const char * name,Bit16u * attr);
++	virtual bool Rename(const char * oldname,const char * newname);
+ 	virtual bool AllocationInfo(Bit16u * _bytes_sector,Bit8u * _sectors_cluster,Bit16u * _total_clusters,Bit16u * _free_clusters);
+ 	virtual bool FileExists(const char* name);
+ 	virtual bool FileStat(const char* name, FileStat_Block * const stat_block);
+@@ -177,15 +216,17 @@ public:
+ 	imageDisk *loadedDisk;
+ 	bool created_successfully;
+ private:
++	Bit32u partSectOff;
++	DOS_Drive_Cache dirCache;
+ 	Bit32u getClusterValue(Bit32u clustNum);
+ 	void setClusterValue(Bit32u clustNum, Bit32u clustValue);
+ 	Bit32u getClustFirstSect(Bit32u clustNum);
+ 	bool FindNextInternal(Bit32u dirClustNumber, DOS_DTA & dta, direntry *foundEntry);
+-	bool getDirClustNum(char * dir, Bit32u * clustNum, bool parDir);
++	bool getDirClustNum(const char * dir, Bit32u * clustNum, bool parDir);
+ 	bool getFileDirEntry(char const * const filename, direntry * useEntry, Bit32u * dirClust, Bit32u * subEntry);
+ 	bool addDirectoryEntry(Bit32u dirClustNumber, direntry useEntry);
+ 	void zeroOutCluster(Bit32u clustNumber);
+-	bool getEntryName(char *fullname, char *entname);
++	bool getEntryName(const char *fullname, char *entname);
+ 	friend void DOS_Shell::CMD_SUBST(char* args); 	
+ 	struct {
+ 		char srch_dir[CROSS_LEN];
+@@ -215,18 +256,38 @@ class cdromDrive : public localDrive
+ {
+ public:
+ 	cdromDrive(const char driveLetter, const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid, int& error);
+-	virtual bool FileOpen(DOS_File * * file,char * name,Bit32u flags);
+-	virtual bool FileCreate(DOS_File * * file,char * name,Bit16u attributes);
+-	virtual bool FileUnlink(char * name);
+-	virtual bool RemoveDir(char * dir);
+-	virtual bool MakeDir(char * dir);
+-	virtual bool Rename(char * oldname,char * newname);
+-	virtual bool GetFileAttr(char * name,Bit16u * attr);
+-	virtual bool FindFirst(char * _dir,DOS_DTA & dta,bool fcb_findfirst=false);
++	virtual bool FileOpen(DOS_File * * file,const char * name,Bit32u flags);
++	virtual bool FileCreate(DOS_File * * file,const char * name,Bit16u attributes);
++	virtual bool FileUnlink(const char * name);
++	virtual bool RemoveDir(const char * dir);
++	virtual bool MakeDir(const char * dir);
++	virtual bool Rename(const char * oldname,const char * newname);
++	virtual bool GetFileAttr(const char * name,Bit16u * attr);
++	virtual bool FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst=false);
++	virtual void SetDir(const char* path);
++	virtual bool isRemote(void);
++	virtual bool isRemovable(void);virtual Bits UnMount(void);
++private:
++	Bit8u subUnit;	char driveLetter;
++};
++
++class physfscdromDrive : public physfsDrive
++{
++public:
++	physfscdromDrive(const char driveLetter, const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid, int& error);
++	virtual bool FileOpen(DOS_File * * file,const char * name,Bit32u flags);
++	virtual bool FileCreate(DOS_File * * file,const char * name,Bit16u attributes);
++	virtual bool FileUnlink(const char * name);
++	virtual bool RemoveDir(const char * dir);
++	virtual bool MakeDir(const char * dir);
++	virtual bool Rename(const char * oldname,const char * newname);
++	virtual bool GetFileAttr(const char * name,Bit16u * attr);
++	virtual bool FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst=false);
+ 	virtual void SetDir(const char* path);
+ 	virtual bool isRemote(void);
+ 	virtual bool isRemovable(void);
+ 	virtual Bits UnMount(void);
++	virtual const char *GetInfo(void);
+ private:
+ 	Bit8u subUnit;
+ 	char driveLetter;
+@@ -311,16 +372,16 @@ class isoDrive : public DOS_Drive {
+ public:
+ 	isoDrive(char driveLetter, const char* device_name, Bit8u mediaid, int &error);
+ 	~isoDrive();
+-	virtual bool FileOpen(DOS_File **file, char *name, Bit32u flags);
+-	virtual bool FileCreate(DOS_File **file, char *name, Bit16u attributes);
+-	virtual bool FileUnlink(char *name);
+-	virtual bool RemoveDir(char *dir);
+-	virtual bool MakeDir(char *dir);
+-	virtual bool TestDir(char *dir);
+-	virtual bool FindFirst(char *_dir, DOS_DTA &dta, bool fcb_findfirst);
++	virtual bool FileOpen(DOS_File **file, const char *name, Bit32u flags);
++	virtual bool FileCreate(DOS_File **file, const char *name, Bit16u attributes);
++	virtual bool FileUnlink(const char *name);
++	virtual bool RemoveDir(const char *dir);
++	virtual bool MakeDir(const char *dir);
++	virtual bool TestDir(const char *dir);
++	virtual bool FindFirst(const char *_dir, DOS_DTA &dta, bool fcb_findfirst);
+ 	virtual bool FindNext(DOS_DTA &dta);
+-	virtual bool GetFileAttr(char *name, Bit16u *attr);
+-	virtual bool Rename(char * oldname,char * newname);
++	virtual bool GetFileAttr(const char *name, Bit16u *attr);
++	virtual bool Rename(const char * oldname,const char * newname);
+ 	virtual bool AllocationInfo(Bit16u *bytes_sector, Bit8u *sectors_cluster, Bit16u *total_clusters, Bit16u *free_clusters);
+ 	virtual bool FileExists(const char *name);
+    	virtual bool FileStat(const char *name, FileStat_Block *const stat_block);
+@@ -373,16 +434,16 @@ struct VFILE_Block;
+ class Virtual_Drive: public DOS_Drive {
+ public:
+ 	Virtual_Drive();
+-	bool FileOpen(DOS_File * * file,char * name,Bit32u flags);
+-	bool FileCreate(DOS_File * * file,char * name,Bit16u attributes);
+-	bool FileUnlink(char * name);
+-	bool RemoveDir(char * dir);
+-	bool MakeDir(char * dir);
+-	bool TestDir(char * dir);
+-	bool FindFirst(char * _dir,DOS_DTA & dta,bool fcb_findfirst);
++	bool FileOpen(DOS_File * * file,const char * name,Bit32u flags);
++	bool FileCreate(DOS_File * * file,const char * name,Bit16u attributes);
++	bool FileUnlink(const char * name);
++	bool RemoveDir(const char * dir);
++	bool MakeDir(const char * dir);
++	bool TestDir(const char * dir);
++	bool FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst);
+ 	bool FindNext(DOS_DTA & dta);
+-	bool GetFileAttr(char * name,Bit16u * attr);
+-	bool Rename(char * oldname,char * newname);
++	bool GetFileAttr(const char * name,Bit16u * attr);
++	bool Rename(const char * oldname,const char * newname);
+ 	bool AllocationInfo(Bit16u * _bytes_sector,Bit8u * _sectors_cluster,Bit16u * _total_clusters,Bit16u * _free_clusters);
+ 	bool FileExists(const char* name);
+ 	bool FileStat(const char* name, FileStat_Block* const stat_block);
+diff --git a/src/shell/shell.cpp b/src/shell/shell.cpp
+index 8f379b2f..d9949cfe 100644
+--- a/src/shell/shell.cpp
++++ b/src/shell/shell.cpp
+@@ -381,10 +381,18 @@ public:
+ 		char buffer[CROSS_LEN];
+ 		char orig[CROSS_LEN];
+ 		char cross_filesplit[2] = {CROSS_FILESPLIT , 0};
+-		/* Combining -securemode and no parameter leaves you with a lovely Z:\. */ 
+-		if ( !control->cmdline->FindCommand(1,line) ) { 
+-			if ( secure ) autoexec[12].Install("z:\\config.com -securemode");
+-		} else {
++
++		Bitu dummy = 1;
++		bool command_found = false;
++		while (control->cmdline->FindCommand(dummy++,line) && !command_found) {
++			if (line.find(':',((line[0]|0x20) >= 'a' && (line[0]|0x20) <= 'z')?2:0) != std::string::npos) {
++				/* a physfs source */
++				autoexec[12].Install(std::string("MOUNT C \"") + line + std::string("\""));
++				autoexec[13].Install("C:");
++				if(secure) autoexec[14].Install("z:\\config.com -securemode");
++				break;
++			}
++
+ 			struct stat test;
+ 			strcpy(buffer,line.c_str());
+ 			if (stat(buffer,&test)){
+@@ -410,11 +418,20 @@ public:
+ 				}
+ 				*name++ = 0;
+ 				if (access(buffer,F_OK)) goto nomount;
+-				autoexec[12].Install(std::string("MOUNT C \"") + buffer + "\"");
+-				autoexec[13].Install("C:");
+-				/* Save the non modified filename (so boot and imgmount can use it (long filenames, case sensivitive)*/
++				/* Save the non-modified filename (so physfs, boot and imgmount can use it (long filenames, case sensivitive)) */
+ 				strcpy(orig,name);
+ 				upcase(name);
++				if((strstr(name,".ZIP") != 0) || (strstr(name,".7Z") != 0)) {
++					//TODO:Add more extensions?
++					LOG_MSG("Mounting %s as PHYSFS write directory", buffer);
++					autoexec[12].Install(std::string("MOUNT C \"") + buffer + std::string(":") + orig
++						+ std::string(":\""));
++					autoexec[13].Install("C:");
++					if(secure) autoexec[14].Install("z:\\config.com -securemode");
++					break;
++				}
++				autoexec[12].Install(std::string("MOUNT C \"") + buffer + "\"");
++				autoexec[13].Install("C:");
+ 				if(strstr(name,".BAT") != 0) {
+ 					if(secure) autoexec[14].Install("z:\\config.com -securemode");
+ 					/* BATch files are called else exit will not work */
+-- 
+2.34.1
+
