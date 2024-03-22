@@ -487,12 +487,22 @@ void Mouse_CursorMoved(float xrel,float yrel,float x,float y,bool emulate) {
 	}
 	Mouse_AddEvent(MOUSE_HAS_MOVED);
 	DrawCursor();
+
+	//--Added 2010-05-29: let Boxer know that the program moved the mouse cursor,
+	//and feed it the new relative mouse coordinates
+	boxer_mouseMovedToPoint(mouse.x / mouse.max_x, mouse.y / mouse.max_y);
+	//--End of modifications
 }
 
 void Mouse_CursorSet(float x,float y) {
 	mouse.x=x;
 	mouse.y=y;
 	DrawCursor();
+
+	//--Added 2010-05-29: let Boxer know that the program moved the mouse cursor,
+	//and feed it the new relative mouse coordinates
+	boxer_mouseMovedToPoint(mouse.x / mouse.max_x, mouse.y / mouse.max_y);
+	//--End of modifications
 }
 
 void Mouse_ButtonPressed(Bit8u button) {
@@ -717,6 +727,12 @@ static Bitu INT33_Handler(void) {
 		else if (mouse.min_y >= (Bit16s)reg_dx) mouse.y = static_cast<float>(mouse.min_y); 
 		else if ((Bit16s)reg_dx != POS_Y) mouse.y = static_cast<float>(reg_dx);
 		DrawCursor();
+
+		//--Added 2010-05-29: let Boxer know that the program moved the mouse cursor,
+		//and feed it the new relative mouse coordinates
+		boxer_mouseMovedToPoint(mouse.x / mouse.max_x, mouse.y / mouse.max_y);
+		//--End of modifications
+
 		break;
 	case 0x05:	/* Return Button Press Data */
 		{

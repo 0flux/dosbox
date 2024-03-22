@@ -85,6 +85,10 @@ static const char* UnmountHelper(char umount) {
 		imageDiskList[i_drive] = NULL;
 	}
 
+	//--Added 2010-01-18 by Alun Bestor: let Boxer know that the drive state has changed
+	boxer_driveDidUnmount(i_drive);
+	//--End of modifications
+
 	return MSG_Get("PROGRAM_MOUNT_UMOUNT_SUCCESS");
 }
 
@@ -400,7 +404,12 @@ public:
 				    (temp_line == "c:/") || (temp_line == "C:/")    )	
 					WriteOut(MSG_Get("PROGRAM_MOUNT_WARNING_WIN"));
 #else
-				if(temp_line == "/") WriteOut(MSG_Get("PROGRAM_MOUNT_WARNING_OTHER"));
+				//--Modified 2009-02-20 by Alun Bestor: we now prohibit this altogether and produce our own contextual warning.
+				//if(temp_line == "/") WriteOut(MSG_Get("PROGRAM_MOUNT_WARNING_OTHER"));
+				
+				if(!boxer_shouldMountPath(temp_line.c_str())) return;
+				
+				//--End of modifications
 #endif
 				if (is_physfs) {
 #if C_HAVE_PHYSFS
@@ -438,6 +447,11 @@ public:
 			label = drive; label += "_FLOPPY";
 			newdrive->SetLabel(label.c_str(),iscdrom,true);
 		}
+		
+		//--Added 2010-01-18 by Alun Bestor: let Boxer know that the drive state has changed
+		boxer_driveDidMount(drive-'A');
+		//--End of modifications
+		
 		return;
 showusage:
 #if defined (WIN32) || defined(OS2)
@@ -1366,6 +1380,10 @@ public:
 			WriteOut(MSG_Get("PROGRAM_IMGMOUNT_MOUNT_NUMBER"),drive-'0',temp_line.c_str());
 		}
 
+		//--Added 2010-01-18 by Alun Bestor: let Boxer know that the drive state has changed
+		boxer_driveDidMount(drive-'A');
+		//--End of modifications
+
 		// check if volume label is given. be careful for cdrom
 		//if (cmd->FindString("-label",label,true)) newdrive->dirCache.SetLabel(label.c_str());
 		return;
@@ -1652,7 +1670,9 @@ void DOS_SetupPrograms(void) {
 	PROGRAMS_MakeFile("MEM.COM",MEM_ProgramStart);
 	PROGRAMS_MakeFile("LOADFIX.COM",LOADFIX_ProgramStart);
 	PROGRAMS_MakeFile("RESCAN.COM",RESCAN_ProgramStart);
-	PROGRAMS_MakeFile("INTRO.COM",INTRO_ProgramStart);
+    //--Disabled 2012-01-06 by Alun Bestor: Boxer no longer uses the INTRO command.
+	//PROGRAMS_MakeFile("INTRO.COM",INTRO_ProgramStart);
+    //--End of modifications
 	PROGRAMS_MakeFile("BOOT.COM",BOOT_ProgramStart);
 #if C_DEBUG
 	PROGRAMS_MakeFile("LDGFXROM.COM", LDGFXROM_ProgramStart);

@@ -1189,7 +1189,20 @@ public:
 		mem_writed(BIOS_TIMER,ticks);
 	}
 	~DOS(){
-		for (Bit16u i=0;i<DOS_DRIVES;i++) delete Drives[i];
+		//--Modified 2009-12-20 by Alun Bestor to properly clear the devices list on shutdown.
+		//We could also do this with Files, but DOS_SetupFiles() already does this.
+		Bit16u i;
+		for (i=0;i<DOS_DEVICES;i++) if (Devices[i])
+		{
+			delete Devices[i];
+			Devices[i] = 0;
+		}
+		for (i=0;i<DOS_DRIVES;i++) if (Drives[i])
+		{
+			delete Drives[i];
+			Drives[i] = 0;
+		}
+		//--End of modifications
 	}
 };
 

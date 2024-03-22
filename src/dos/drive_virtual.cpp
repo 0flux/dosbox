@@ -155,19 +155,19 @@ bool Virtual_Drive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
 	return false;
 }
 
-bool Virtual_Drive::FileCreate(DOS_File * * /*file*/,const char * /*name*/,Bit16u /*attributes*/) {
+bool Virtual_Drive::FileCreate(DOS_File * * file,const char * name,Bit16u attributes) {
 	return false;
 }
 
-bool Virtual_Drive::FileUnlink(const char * /*name*/) {
+bool Virtual_Drive::FileUnlink(const char * name) {
 	return false;
 }
 
-bool Virtual_Drive::RemoveDir(const char * /*dir*/) {
+bool Virtual_Drive::RemoveDir(const char * dir) {
 	return false;
 }
 
-bool Virtual_Drive::MakeDir(const char * /*dir*/) {
+bool Virtual_Drive::MakeDir(const char * dir) {
 	return false;
 }
 
@@ -200,8 +200,8 @@ bool Virtual_Drive::FileExists(const char* name){
 	return false;
 }
 
-bool Virtual_Drive::FindFirst(const char * /*_dir*/,DOS_DTA & dta,bool fcb_findfirst) {
-	search_file = first_file;
+bool Virtual_Drive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
+	search_file=first_file;
 	Bit8u attr;char pattern[DOS_NAMELENGTH_ASCII];
 	dta.GetSearchParams(attr,pattern);
 	if (attr == DOS_ATTR_VOLUME) {
@@ -232,7 +232,7 @@ bool Virtual_Drive::FindNext(DOS_DTA & dta) {
 }
 
 bool Virtual_Drive::GetFileAttr(const char * name,Bit16u * attr) {
-	VFILE_Block * cur_file = first_file;
+	VFILE_Block * cur_file=first_file;
 	while (cur_file) {
 		if (strcasecmp(name,cur_file->name)==0) { 
 			*attr = DOS_ATTR_ARCHIVE;	//Maybe readonly ?
@@ -243,7 +243,7 @@ bool Virtual_Drive::GetFileAttr(const char * name,Bit16u * attr) {
 	return false;
 }
 
-bool Virtual_Drive::Rename(const char * /*oldname*/,const char * /*newname*/) {
+bool Virtual_Drive::Rename(const char * oldname,const char * newname) {
 	return false;
 }
 

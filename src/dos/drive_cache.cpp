@@ -23,6 +23,10 @@
 #include "support.h"
 #include "cross.h"
 
+//--Added 2009-12-26 by Alun Bestor to allow Boxer to hook into DOSBox internals
+#include "BXCoalface.h"
+//--End of modifications
+
 // STL stuff
 #include <vector>
 #include <iterator>
@@ -275,22 +279,42 @@ bool DOS_Drive_Cache::IsCachedIn(CFileInfo* curDir) {
 	return (curDir->fileList.size()>0);
 }
 
-
-bool DOS_Drive_Cache::GetShortName(const char* fullname, char* shortname) {
+//--Modified 2009-10-06 by Alun Bestor: this function is unused by DOSBox but provides a useful way for Boxer to look up short filenames.
+//However, in its original state it didn't work properly: it was comparing a filename to a full OS path, instead of a filename to a filename. This has now been modified to produce the intended result.
+bool DOS_Drive_Cache::GetShortName(const char* dirpath, const char*filename, char* shortname) {
 	// Get Dir Info
 	char expand[CROSS_LEN] = {0};
-	CFileInfo* curDir = FindDirInfo(fullname,expand);
+	CFileInfo* theDir = FindDirInfo(dirpath,expand);
+	//printf("\nScanning folder: %s (expanded to: %s)\n\n", dirpath, expand);
 
-	std::vector<CFileInfo*>::size_type filelist_size = curDir->longNameList.size();
+	std::vector<CFileInfo*>::size_type filelist_size = theDir->longNameList.size();
 	if (GCC_UNLIKELY(filelist_size<=0)) return false;
 
+	Bits i, numfiles = (Bits)(filelist_size);
+
+	for (i=0; i < numfiles; i++) {
+		//printf("Testing filename: %s\n", theDir->longNameList[i]->orgname);
+		
+		if (!strcmp(filename,theDir->longNameList[i]->orgname))
+		{
+			
+			//printf("Found match: %s\n", theDir->longNameList[i]->shortname);
+			strcpy(shortname,theDir->longNameList[i]->shortname);
+			return true;
+		};
+	}
+	
+	/*
+	//This binary-search code would have been much more efficient than the above,
+	//but it was broken enough to skip element and I haven't debugged it yet
+	//to figure out which detail is wrong.
 	Bits low		= 0;
 	Bits high		= (Bits)(filelist_size-1);
 	Bits mid, res;
 
 	while (low<=high) {
 		mid = (low+high)/2;
-		res = strcmp(fullname,curDir->longNameList[mid]->orgname);
+		res = strcmp(filename,curDir->longNameList[mid]->orgname);
 		if (res>0)	low  = mid+1; else
 		if (res<0)	high = mid-1; 
 		else {
@@ -298,8 +322,10 @@ bool DOS_Drive_Cache::GetShortName(const char* fullname, char* shortname) {
 			return true;
 		};
 	}
+	*/
 	return false;
 }
+//--End of modifications
 
 int DOS_Drive_Cache::CompareShortname(const char* compareName, const char* shortName) {
 	char const* cpos = strchr(shortName,'~');
@@ -653,6 +679,7 @@ bool DOS_Drive_Cache::OpenDir(const char* path, Bit16u& id) {
 }
 
 bool DOS_Drive_Cache::OpenDir(CFileInfo* dir, const char* expand, Bit16u& id) {
+	if (!drive) return false; //FIXME!! this should never happen
 	id = GetFreeID(dir);
 	dirSearch[id] = dir;
 	char expandcopy [CROSS_LEN];
@@ -676,6 +703,10 @@ bool DOS_Drive_Cache::OpenDir(CFileInfo* dir, const char* expand, Bit16u& id) {
 }
 
 void DOS_Drive_Cache::CreateEntry(CFileInfo* dir, const char* name, bool is_directory) {
+	//--Added 2009-12-26 by Alun Bestor to allow Boxer to hide OSX metadata files
+	if (!boxer_shouldShowFileWithName(name)) return;
+	//--End of modifications
+	
 	CFileInfo* info = new CFileInfo;
 	strcpy(info->orgname, name);				
 	info->shortNr = 0;
