@@ -48,7 +48,7 @@ private:
 };
 
 
-bool localDrive::FileCreate(DOS_File * * file,char * name,Bit16u /*attributes*/) {
+bool localDrive::FileCreate(DOS_File * * file,const char * name,Bit16u /*attributes*/) {
 //TODO Maybe care for attributes but not likely
 	char newname[CROSS_LEN];
 	strcpy(newname,basedir);
@@ -71,7 +71,13 @@ bool localDrive::FileCreate(DOS_File * * file,char * name,Bit16u /*attributes*/)
 		return false;
 	}
    
-	if(!existing_file) dirCache.AddEntry(newname, true);
+	if(!existing_file) {
+		strcpy(newname,basedir);
+		strcat(newname,name);
+		CROSS_FILENAME(newname);
+		dirCache.AddEntry(newname, true);
+	}
+
 	/* Make the 16 bit device information */
 	*file=new localFile(name,hand);
 	(*file)->flags=OPEN_READWRITE;
@@ -79,7 +85,7 @@ bool localDrive::FileCreate(DOS_File * * file,char * name,Bit16u /*attributes*/)
 	return true;
 }
 
-bool localDrive::FileOpen(DOS_File * * file,char * name,Bit32u flags) {
+bool localDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
 	const char* type;
 	switch (flags&0xf) {
 	case OPEN_READ:type="rb"; break;
@@ -134,7 +140,7 @@ bool localDrive::GetSystemFilename(char *sysName, char const * const dosName) {
 	return true;
 }
 
-bool localDrive::FileUnlink(char * name) {
+bool localDrive::FileUnlink(const char * name) {
 	char newname[CROSS_LEN];
 	strcpy(newname,basedir);
 	strcat(newname,name);
@@ -175,7 +181,7 @@ bool localDrive::FileUnlink(char * name) {
 	}
 }
 
-bool localDrive::FindFirst(char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
+bool localDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst) {
 	char tempDir[CROSS_LEN];
 	strcpy(tempDir,basedir);
 	strcat(tempDir,_dir);
@@ -284,7 +290,7 @@ again:
 	return true;
 }
 
-bool localDrive::GetFileAttr(char * name,Bit16u * attr) {
+bool localDrive::GetFileAttr(const char * name,Bit16u * attr) {
 	char newname[CROSS_LEN];
 	strcpy(newname,basedir);
 	strcat(newname,name);
@@ -301,7 +307,7 @@ bool localDrive::GetFileAttr(char * name,Bit16u * attr) {
 	return false; 
 }
 
-bool localDrive::MakeDir(char * dir) {
+bool localDrive::MakeDir(const char * dir) {
 	char newdir[CROSS_LEN];
 	strcpy(newdir,basedir);
 	strcat(newdir,dir);
@@ -316,7 +322,7 @@ bool localDrive::MakeDir(char * dir) {
 	return (temp==0);// || ((temp!=0) && (errno==EEXIST));
 }
 
-bool localDrive::RemoveDir(char * dir) {
+bool localDrive::RemoveDir(const char * dir) {
 	char newdir[CROSS_LEN];
 	strcpy(newdir,basedir);
 	strcat(newdir,dir);
@@ -326,7 +332,7 @@ bool localDrive::RemoveDir(char * dir) {
 	return (temp==0);
 }
 
-bool localDrive::TestDir(char * dir) {
+bool localDrive::TestDir(const char * dir) {
 	char newdir[CROSS_LEN];
 	strcpy(newdir,basedir);
 	strcat(newdir,dir);
@@ -344,7 +350,7 @@ bool localDrive::TestDir(char * dir) {
 	return (temp==0);
 }
 
-bool localDrive::Rename(char * oldname,char * newname) {
+bool localDrive::Rename(const char * oldname,const char * newname) {
 	char newold[CROSS_LEN];
 	strcpy(newold,basedir);
 	strcat(newold,oldname);
@@ -421,6 +427,23 @@ Bits localDrive::UnMount(void) {
 	return 0; 
 }
 
+/* helper functions for drive cache */
+void *localDrive::opendir(const char *name) {
+	return open_directory(name);
+}
+
+void localDrive::closedir(void *handle) {
+	close_directory((dir_information*)handle);
+}
+
+bool localDrive::read_directory_first(void *handle, char* entry_name, bool& is_directory) {
+	return ::read_directory_first((dir_information*)handle, entry_name, is_directory);
+}
+
+bool localDrive::read_directory_next(void *handle, char* entry_name, bool& is_directory) {
+	return ::read_directory_next((dir_information*)handle, entry_name, is_directory);
+}
+
 localDrive::localDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors_cluster,Bit16u _total_clusters,Bit16u _free_clusters,Bit8u _mediaid) {
 	strcpy(basedir,startdir);
 	sprintf(info,"local directory %s",startdir);
@@ -430,7 +453,7 @@ localDrive::localDrive(const char * startdir,Bit16u _bytes_sector,Bit8u _sectors
 	allocation.free_clusters=_free_clusters;
 	allocation.mediaid=_mediaid;
 
-	dirCache.SetBaseDir(basedir);
+	dirCache.SetBaseDir(basedir,this);
 }
 
 
@@ -567,7 +590,7 @@ cdromDrive::cdromDrive(const char driveLetter, const char * startdir,Bit16u _byt
 	if (MSCDEX_GetVolumeName(subUnit,name)) dirCache.SetLabel(name,true,true);
 }
 
-bool cdromDrive::FileOpen(DOS_File * * file,char * name,Bit32u flags) {
+bool cdromDrive::FileOpen(DOS_File * * file,const char * name,Bit32u flags) {
 	if ((flags&0xf)==OPEN_READWRITE) {
 		flags &= ~OPEN_READWRITE;
 	} else if ((flags&0xf)==OPEN_WRITE) {
@@ -579,38 +602,38 @@ bool cdromDrive::FileOpen(DOS_File * * file,char * name,Bit32u flags) {
 	return retcode;
 }
 
-bool cdromDrive::FileCreate(DOS_File * * /*file*/,char * /*name*/,Bit16u /*attributes*/) {
+bool cdromDrive::FileCreate(DOS_File * * /*file*/,const char * /*name*/,Bit16u /*attributes*/) {
 	DOS_SetError(DOSERR_ACCESS_DENIED);
 	return false;
 }
 
-bool cdromDrive::FileUnlink(char * /*name*/) {
+bool cdromDrive::FileUnlink(const char * /*name*/) {
 	DOS_SetError(DOSERR_ACCESS_DENIED);
 	return false;
 }
 
-bool cdromDrive::RemoveDir(char * /*dir*/) {
+bool cdromDrive::RemoveDir(const char * /*dir*/) {
 	DOS_SetError(DOSERR_ACCESS_DENIED);
 	return false;
 }
 
-bool cdromDrive::MakeDir(char * /*dir*/) {
+bool cdromDrive::MakeDir(const char * /*dir*/) {
 	DOS_SetError(DOSERR_ACCESS_DENIED);
 	return false;
 }
 
-bool cdromDrive::Rename(char * /*oldname*/,char * /*newname*/) {
+bool cdromDrive::Rename(const char * /*oldname*/,const char * /*newname*/) {
 	DOS_SetError(DOSERR_ACCESS_DENIED);
 	return false;
 }
 
-bool cdromDrive::GetFileAttr(char * name,Bit16u * attr) {
+bool cdromDrive::GetFileAttr(const char * name,Bit16u * attr) {
 	bool result = localDrive::GetFileAttr(name,attr);
 	if (result) *attr |= DOS_ATTR_READ_ONLY;
 	return result;
 }
 
-bool cdromDrive::FindFirst(char * _dir,DOS_DTA & dta,bool /*fcb_findfirst*/) {
+bool cdromDrive::FindFirst(const char * _dir,DOS_DTA & dta,bool /*fcb_findfirst*/) {
 	// If media has changed, reInit drivecache.
 	if (MSCDEX_HasMediaChanged(subUnit)) {
 		dirCache.EmptyCache();

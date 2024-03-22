@@ -36,7 +36,7 @@
 #include "../libs/zmbv/zmbv.cpp"
 #endif
 
-static std::string capturedir;
+std::string capturedir;
 extern const char* RunningProgram;
 Bitu CaptureState;
 
